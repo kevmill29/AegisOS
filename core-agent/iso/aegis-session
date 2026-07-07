@@ -51,8 +51,15 @@ export AEGIS_KIOSK=1
 
 # Electron as root needs --no-sandbox; native Wayland via ozone. dbus-run-session
 # gives Chromium the session bus it expects (cuts startup stalls and warnings).
+# --disable-gpu: no GPU process at all — WebGL falls back to SwiftShader, which
+# is the only thing that renders in a VM with no real GL.
+# Log to a file: cage owns the screen, so console output is invisible exactly
+# when it matters; aegis-init prints this log's tail on crashloop fallback.
+mkdir -p /var/log
+echo "--- aegis-session $(date 2>/dev/null) ---" >> /var/log/aegis-session.log
 exec dbus-run-session -- cage -- electron /opt/aegis/frontend \
   --no-sandbox \
   --ozone-platform=wayland \
   --enable-features=UseOzonePlatform,WaylandWindowDecorations \
-  --disable-gpu-compositing
+  --disable-gpu \
+  >> /var/log/aegis-session.log 2>&1

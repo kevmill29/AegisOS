@@ -38,7 +38,14 @@ while true; do
     /usr/bin/aegis-session >/dev/console 2>&1
     if [ $((SECONDS - t0)) -lt 20 ]; then
       fails=$((fails + 1))
-      [ "$fails" -ge 3 ] && echo "  kiosk session crashlooping — falling back to console shell"
+      if [ "$fails" -ge 3 ]; then
+        echo "  kiosk session crashlooping — falling back to console shell"
+        if [ -f /var/log/aegis-session.log ]; then
+          echo "  --- last lines of /var/log/aegis-session.log ---"
+          tail -n 15 /var/log/aegis-session.log
+          echo "  -----------------------------------------------"
+        fi
+      fi
     else
       fails=0
     fi
