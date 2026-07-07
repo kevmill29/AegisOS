@@ -148,27 +148,50 @@ else
 fi
 
 # ------------------------------- do the install -------------------------------
-echo ""
+MNT="/mnt/target"
+mkdir -p "$MNT"
+
+gum style --foreground 105 "  [0/7] Locating Aegis boot media..."
+mkdir -p /run/bootmedia
+for dev in /sys/block/*; do
+    devname="/dev/$(basename "$dev")"
+    mount -o ro "$devname" /run/bootmedia 2>/dev/null
+    if [ -d /run/bootmedia/arch-bootstrap ]; then
+        BOOT_MEDIA="$devname"
+        break
+    fi
+    umount /run/bootmedia 2>/dev/null
+done
+[ -n "$BOOT_MEDIA" ] || fail "Could not find Aegis boot media (USB/CD)!"
+
+# Temporarily bind mount sysfs/proc/dev to use the read-only bootstrap environment for partitioning
+BOOTSTRAP="/run/bootmedia/arch-bootstrap"
+mount -t proc /proc "$BOOTSTRAP/proc"
+mount -t sysfs /sys "$BOOTSTRAP/sys"
+mount -o bind /dev "$BOOTSTRAP/dev"
+
 if [ "$INSTALL_MODE" = "disk" ]; then
-gum style --foreground 105 "  [1/7] Partitioning $TARGET (UEFI ESP + Linux Root)..."
-    printf 'label: gpt\n,512M,U\n,,L\n' | sfdisk --quiet "$TARGET" || fail "sfdisk failed"
+    gum style --foreground 105 "  [1/7] Partitioning $TARGET (UEFI ESP + Linux Root)..."
+    printf 'label: gpt\n,512M,U\n,,L\n' | chroot "$BOOTSTRAP" sfdisk --quiet "$TARGET" || fail "sfdisk failed"
     blockdev --rereadpt "$TARGET" 2>/dev/null
     sleep 1
 
-    case "$TARGET" in
-      *[0-9]) PART_EFI="${TARGET}p1"; PART_ROOT="${TARGET}p2" ;;
-      *)      PART_EFI="${TARGET}1"; PART_ROOT="${TARGET}2" ;;
-    esac
+    PART_EFI="${TARGET}1"
+    PART_ROOT="${TARGET}2"
+    [ -b "$PART_EFI" ] || PART_EFI="${TARGET}p1"
+    [ -b "$PART_ROOT" ] || PART_ROOT="${TARGET}p2"
+    
+    [ -b "$PART_EFI" ] || { sleep 1; }
     [ -b "$PART_ROOT" ] || { sleep 1; }
     [ -b "$PART_ROOT" ] || fail "partition $PART_ROOT did not appear"
 
     gum style --foreground 105 "  [2/7] Formatting partitions..."
-    mkfs.fat -F32 "$PART_EFI" || fail "mkfs.fat failed"
-    mkfs.ext4 -q -F -L AEGIS "$PART_ROOT" || fail "mkfs.ext4 failed"
+    chroot "$BOOTSTRAP" mkfs.fat -F32 "$PART_EFI" || fail "mkfs.fat failed"
+    chroot "$BOOTSTRAP" mkfs.ext4 -q -F -L AEGIS "$PART_ROOT" || fail "mkfs.ext4 failed"
 else
     gum style --foreground 105 "  [1/7] Skipping partitioning (using user-selected partitions)..."
     gum style --foreground 105 "  [2/7] Formatting ROOT partition $PART_ROOT as ext4..."
-    mkfs.ext4 -q -F -L AEGIS "$PART_ROOT" || fail "mkfs.ext4 failed"
+    chroot "$BOOTSTRAP" mkfs.ext4 -q -F -L AEGIS "$PART_ROOT" || fail "mkfs.ext4 failed"
 fi
 
 gum style --foreground 105 "  [3/7] Mounting partitions..."
@@ -177,6 +200,11 @@ mkdir -p "$MNT/boot/efi"
 mount "$PART_EFI" "$MNT/boot/efi" || fail "mount efi failed"
 
 gum style --foreground 105 "  [4/7] Copying installer toolkit to RAM..."
+# Unmount the temporary read-only chroot binds so we don't accidentally copy /dev and /proc into RAM!
+umount -l "$BOOTSTRAP/dev"
+umount -l "$BOOTSTRAP/sys"
+umount -l "$BOOTSTRAP/proc"
+
 cp -a /run/bootmedia/arch-bootstrap /tmp/ || fail "arch-bootstrap not found on media"
 
 gum style --foreground 105 "  [5/7] Installing base OS via pacstrap (downloading packages)..."
