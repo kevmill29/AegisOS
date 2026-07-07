@@ -15,10 +15,10 @@
 # image — "install" means "make this disk boot Aegis," not "unpack a root fs."
 
 set -u
-BZIMAGE=/install/bzImage
-INITRAMFS=/install/initramfs.gz
-MBR_BIN=/install/mbr.bin
-LDLINUX=/install/ldlinux.c32
+BZIMAGE=/run/bootmedia/boot/bzImage
+INITRAMFS=/run/bootmedia/boot/initramfs.gz
+MBR_BIN=/run/bootmedia/boot/mbr.bin
+LDLINUX=/run/bootmedia/boot/ldlinux.c32
 MNT=/mnt/target
 
 # --- minimal runtime bring-up (installer initramfs, same base as live init) ---
