@@ -44,12 +44,21 @@ export default function App() {
   const [terminalOpen, setTerminalOpen] = useState(false);
 
   useEffect(() => {
-    const sphere = new AegisSphere(canvasRef.current);
+    // WebGL is a nice-to-have, not load-bearing: if context creation fails
+    // (no GPU, SwiftShader unavailable), run without the sphere instead of
+    // letting the uncaught constructor error unmount the whole tree — that
+    // failure mode rendered the entire HUD black on GPU-less targets.
+    let sphere = null;
+    try {
+      sphere = new AegisSphere(canvasRef.current);
+    } catch (err) {
+      console.warn('[aegis] sphere disabled, WebGL unavailable:', err?.message ?? err);
+    }
     sphereRef.current = sphere;
 
     let audioTimer;
     createAudioSource().then((source) => {
-      audioTimer = setInterval(() => sphere.setAudioLevel(source.getLevel()), 33);
+      audioTimer = setInterval(() => sphere?.setAudioLevel(source.getLevel()), 33);
     });
 
     // In a plain browser (vite preview, no Electron preload) window.aegis is
@@ -85,7 +94,7 @@ export default function App() {
       offLink?.();
       offToggle?.();
       window.removeEventListener('keydown', onKeyDown);
-      sphere.dispose();
+      sphere?.dispose();
     };
   }, []);
 
