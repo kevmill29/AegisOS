@@ -67,7 +67,7 @@ list_disks() {
   for d in /sys/block/*; do
     name="$(basename "$d")"
     case "$name" in
-      sd*|vd*|nvme*)
+      sd*|hd*|vd*|nvme*)
         sectors="$(cat "$d/size" 2>/dev/null || echo 0)"
         mb=$(( sectors / 2048 ))
         echo "$name ${mb}MB"
@@ -96,17 +96,25 @@ else
 
   if [ "$INSTALL_MODE" = "disk" ]; then
       gum style --foreground 212 "Select Target Disk to ERASE:"
-      TARGET_NAME=$(list_disks | gum choose | awk '{print $1}')
+      DISKS=$(list_disks)
+      if [ -z "$DISKS" ]; then
+          fail "No hard drives detected! (Check VM Storage controller)"
+      fi
+      TARGET_NAME=$(echo "$DISKS" | gum choose | awk '{print $1}')
       TARGET="/dev/$TARGET_NAME"
       [ -b "$TARGET" ] || fail "$TARGET is not a block device"
   else
       gum style --foreground 212 "Select Target ROOT Partition to FORMAT as ext4:"
-      TARGET_ROOT_NAME=$(grep -v "loop" /proc/partitions | awk 'NR>2 {print $4 " (" int($3/1024) "MB)"}' | gum choose | awk '{print $1}')
+      PARTS=$(grep -v "loop" /proc/partitions | awk 'NR>2 {print $4 " (" int($3/1024) "MB)"}')
+      if [ -z "$PARTS" ]; then
+          fail "No partitions detected! (Check VM Storage controller)"
+      fi
+      TARGET_ROOT_NAME=$(echo "$PARTS" | gum choose | awk '{print $1}')
       PART_ROOT="/dev/$TARGET_ROOT_NAME"
       [ -b "$PART_ROOT" ] || fail "$PART_ROOT is not a block device"
       
       gum style --foreground 212 "Select Target EFI System Partition to mount:"
-      TARGET_EFI_NAME=$(grep -v "loop" /proc/partitions | awk 'NR>2 {print $4 " (" int($3/1024) "MB)"}' | gum choose | awk '{print $1}')
+      TARGET_EFI_NAME=$(echo "$PARTS" | gum choose | awk '{print $1}')
       PART_EFI="/dev/$TARGET_EFI_NAME"
       [ -b "$PART_EFI" ] || fail "$PART_EFI is not a block device"
   fi
