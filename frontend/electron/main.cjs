@@ -16,6 +16,13 @@ const KIOSK = process.env.AEGIS_KIOSK === '1';
 
 let win = null;
 
+// Last known agent state, replayed to the renderer when the page finishes
+// loading: on slow (software-rendered) targets the TCP connect wins the race
+// against page load, and a healthy socket never re-sends — without the
+// replay the UI shows "link lost" forever despite a live connection.
+let lastLink = { connected: false };
+let lastHello = null;
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
@@ -29,6 +36,10 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
+  });
+  win.webContents.on('did-finish-load', () => {
+    sendToRenderer('aegis:link', lastLink);
+    if (lastHello) sendToRenderer('aegis:event', lastHello);
   });
   win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
 }
@@ -49,7 +60,8 @@ function connectToAgent() {
 
   socket.on('connect', () => {
     console.log('[aegis] agent link established');
-    sendToRenderer('aegis:link', { connected: true });
+    lastLink = { connected: true };
+    sendToRenderer('aegis:link', lastLink);
   });
 
   socket.on('data', (chunk) => {
@@ -61,7 +73,9 @@ function connectToAgent() {
       if (!line) continue;
       try {
         console.log('[aegis] event:', line);
-        sendToRenderer('aegis:event', JSON.parse(line));
+        const event = JSON.parse(line);
+        if (event.type === 'Hello') lastHello = event;
+        sendToRenderer('aegis:event', event);
       } catch {
         console.warn('unparseable event line:', line);
       }
@@ -69,7 +83,8 @@ function connectToAgent() {
   });
 
   const retry = () => {
-    sendToRenderer('aegis:link', { connected: false });
+    lastLink = { connected: false };
+    sendToRenderer('aegis:link', lastLink);
     setTimeout(connectToAgent, RECONNECT_DELAY_MS);
   };
   socket.on('error', () => {}); // 'close' always follows 'error'; retry once, there

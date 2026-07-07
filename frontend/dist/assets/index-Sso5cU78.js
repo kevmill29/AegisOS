@@ -3943,11 +3943,13 @@ uniform float uLink;
 varying vec3 vNormal;
 varying float vDisplace;
 void main() {
-  // Active: cyan. Sleeping: dim deep blue. Link lost: drift toward amber warning.
-  vec3 active = vec3(0.20, 0.85, 1.00);
+  // Awake: cyan. Sleeping: dim deep blue. Link lost: drift toward amber warning.
+  // ("awake" not "active": 'active' is a reserved word in GLSL ES — desktop
+  // drivers tolerate it, ANGLE/SwiftShader correctly rejects the shader.)
+  vec3 awake = vec3(0.20, 0.85, 1.00);
   vec3 asleep = vec3(0.10, 0.16, 0.38);
   vec3 warning = vec3(1.00, 0.55, 0.15);
-  vec3 base = mix(active, asleep, uSleep);
+  vec3 base = mix(awake, asleep, uSleep);
   base = mix(warning, base, uLink);
 
   float fresnel = pow(1.0 - abs(dot(normalize(vNormal), vec3(0.0, 0.0, 1.0))), 2.0);
@@ -3967,10 +3969,10 @@ uniform float uSleep;
 uniform float uLink;
 varying vec3 vNormal;
 void main() {
-  vec3 active = vec3(0.20, 0.85, 1.00);
+  vec3 awake = vec3(0.20, 0.85, 1.00);
   vec3 asleep = vec3(0.10, 0.16, 0.38);
   vec3 warning = vec3(1.00, 0.55, 0.15);
-  vec3 base = mix(warning, mix(active, asleep, uSleep), uLink);
+  vec3 base = mix(warning, mix(awake, asleep, uSleep), uLink);
   // Rendered on back faces only, so this is pure rim: strongest at the silhouette.
   float rim = pow(0.72 - dot(normalize(vNormal), vec3(0.0, 0.0, 1.0)), 3.5);
   gl_FragColor = vec4(base, 1.0) * rim * mix(1.0, 0.3, uSleep);
