@@ -100,7 +100,7 @@ else
       if [ -z "$DISKS" ]; then
           fail "No hard drives detected! (Check VM Storage controller)"
       fi
-      TARGET_NAME=$(echo "$DISKS" | gum choose | awk '{print $1}')
+      TARGET_NAME=$(eval "gum choose $(echo "$DISKS" | sed 's/.*/"&"/')" | awk '{print $1}')
       TARGET="/dev/$TARGET_NAME"
       [ -b "$TARGET" ] || fail "$TARGET is not a block device"
   else
@@ -109,12 +109,12 @@ else
       if [ -z "$PARTS" ]; then
           fail "No partitions detected! (Check VM Storage controller)"
       fi
-      TARGET_ROOT_NAME=$(echo "$PARTS" | gum choose | awk '{print $1}')
+      TARGET_ROOT_NAME=$(eval "gum choose $(echo "$PARTS" | sed 's/.*/"&"/')" | awk '{print $1}')
       PART_ROOT="/dev/$TARGET_ROOT_NAME"
       [ -b "$PART_ROOT" ] || fail "$PART_ROOT is not a block device"
       
       gum style --foreground 212 "Select Target EFI System Partition to mount:"
-      TARGET_EFI_NAME=$(echo "$PARTS" | gum choose | awk '{print $1}')
+      TARGET_EFI_NAME=$(eval "gum choose $(echo "$PARTS" | sed 's/.*/"&"/')" | awk '{print $1}')
       PART_EFI="/dev/$TARGET_EFI_NAME"
       [ -b "$PART_EFI" ] || fail "$PART_EFI is not a block device"
   fi
