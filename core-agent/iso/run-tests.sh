@@ -19,8 +19,10 @@ echo "Starting QEMU test loop..."
 echo "Use Ctrl+A then X to exit QEMU."
 
 # Run QEMU with a serial console so we can interact directly in the WSL terminal.
+# 4G minimum: the installer copies the arch-bootstrap toolkit (~800MB) into a
+# RAM-backed /tmp, which a 2G guest can't hold alongside the initramfs.
 qemu-system-x86_64 \
-    -m 2048 \
+    -m 4096 \
     -enable-kvm \
     -cpu host \
     -hda "$DISK" \

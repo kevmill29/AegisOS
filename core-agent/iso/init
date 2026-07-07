@@ -33,6 +33,32 @@ cmdline_val() {
   done
 }
 
+# Was referenced below but never defined — a failed root mount used to print
+# "fail: not found" and then cascade through mount --move onto an empty dir.
+fail() {
+  echo ""
+  echo "  BOOT FAILED: $1"
+  echo "  Dropping to an emergency shell."
+  exec setsid cttyhack /bin/sh
+}
+
+# Turn a root= value into a block device. Plain /dev paths pass through;
+# LABEL=/UUID= specs (what the installer writes — device names shift once the
+# install USB is removed) resolve via findfs, falling back to a blkid scan for
+# busybox builds without the findfs applet.
+resolve_root() {
+  case "$1" in
+    LABEL=*|UUID=*)
+      r="$(findfs "$1" 2>/dev/null)"
+      if [ -z "$r" ]; then
+        r="$(blkid 2>/dev/null | grep -F "${1#*=}" | head -n 1 | cut -d: -f1)"
+      fi
+      [ -n "$r" ] && echo "$r"
+      ;;
+    *) echo "$1";;
+  esac
+}
+
 # Silence asynchronous kernel logs so they don't overwrite our interactive TUI
 dmesg -n 1
 
@@ -75,11 +101,21 @@ ROOT_DEV="$(cmdline_val root)"
 if [ -n "$ROOT_DEV" ]; then
     echo "Booting from installed root: $ROOT_DEV"
     mkdir -p /newroot
-    
-    # Wait for the root device to appear
-    while [ ! -b "$ROOT_DEV" ]; do sleep 0.1; done
-    
-    mount "$ROOT_DEV" /newroot || fail "Failed to mount root $ROOT_DEV"
+
+    # Wait (bounded — the old loop hung forever on a typo'd or shifted
+    # device) for the root device to appear/resolve.
+    ROOT_BLK=""
+    tries=0
+    while [ "$tries" -lt 150 ]; do
+        ROOT_BLK="$(resolve_root "$ROOT_DEV")"
+        [ -n "$ROOT_BLK" ] && [ -b "$ROOT_BLK" ] && break
+        ROOT_BLK=""
+        tries=$((tries + 1))
+        sleep 0.1
+    done
+    [ -n "$ROOT_BLK" ] || fail "root device $ROOT_DEV never appeared"
+
+    mount "$ROOT_BLK" /newroot || fail "Failed to mount root $ROOT_BLK"
     
     # Move essential mounts to the new root
     mount --move /proc /newroot/proc

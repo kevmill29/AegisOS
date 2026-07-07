@@ -23,6 +23,17 @@ for f in "$KERNEL_BZIMAGE" "$AGENT_BIN" /usr/bin/busybox; do
   [ -f "$f" ] || { echo "missing input: $f" >&2; exit 1; }
 done
 
+# Fail before any long download, not 10 minutes in. mformat (mtools) matters:
+# without it grub-mkrescue SILENTLY emits a BIOS-only image and UEFI boxes
+# won't boot the stick.
+for tool in cpio gzip curl tar zstd mountpoint chroot grub-mkrescue xorriso mformat; do
+  command -v "$tool" >/dev/null 2>&1 \
+    || { echo "missing tool: $tool  (apt install cpio gzip curl tar zstd util-linux coreutils grub-common xorriso mtools)" >&2; exit 1; }
+done
+for d in /usr/lib/grub/i386-pc /usr/lib/grub/x86_64-efi; do
+  [ -d "$d" ] || { echo "missing GRUB platform files: $d  (apt install grub-pc-bin grub-efi-amd64-bin) — grub-mkrescue drops that boot mode without complaint" >&2; exit 1; }
+done
+
 echo "==> Staging initramfs tree"
 # Ensure previous bind mounts from old failed runs are cleanly unmounted
 # so rm doesn't fail or try to delete the host's virtual file systems!
@@ -34,7 +45,10 @@ for mnt in mnt/rootfs dev/pts dev sys proc; do
         umount -l "$WORK/iso/arch-bootstrap/$mnt" || true
     fi
 done
-rm -rf "$WORK"
+# Only the generated pieces are rebuilt; $WORK/gum and $WORK/iso/arch-bootstrap
+# are caches the download guards below check for — a blanket rm -rf here was
+# defeating them and re-fetching ~200MB every run.
+rm -rf "$WORK/initramfs" "$WORK/initramfs.gz" "$WORK/iso/boot" "$WORK/iso/usr"
 mkdir -p "$WORK"/initramfs/{bin,sbin,usr/bin,proc,sys,dev,tmp,run,etc}
 cp /usr/bin/busybox "$WORK/initramfs/bin/busybox"
 # /bin/sh must exist BEFORE init runs — init's own shebang needs it; without
@@ -50,8 +64,14 @@ cp "$REPO_ROOT/iso/aegis-install" "$WORK/initramfs/usr/bin/aegis-install"
 cp "$REPO_ROOT/iso/udhcpc-script" "$WORK/initramfs/etc/udhcpc.script"
 
 echo "==> Downloading Gum for sleek installer UI..."
-if [ ! -f "$WORK/gum" ]; then
-    curl -sL "https://github.com/charmbracelet/gum/releases/download/v0.14.3/gum_0.14.3_Linux_x86_64.tar.gz" | tar -xzC "$WORK" --strip-components=1 "gum_0.14.3_Linux_x86_64/gum"
+# Extract to a temp dir and mv into place so an interrupted download can't
+# leave a truncated binary that the cache check then trusts forever.
+if [ ! -x "$WORK/gum" ]; then
+    rm -rf "$WORK/gum.tmp"
+    mkdir -p "$WORK/gum.tmp"
+    curl -sL "https://github.com/charmbracelet/gum/releases/download/v0.14.3/gum_0.14.3_Linux_x86_64.tar.gz" | tar -xzC "$WORK/gum.tmp" --strip-components=1 "gum_0.14.3_Linux_x86_64/gum"
+    mv "$WORK/gum.tmp/gum" "$WORK/gum"
+    rm -rf "$WORK/gum.tmp"
 fi
 cp "$WORK/gum" "$WORK/initramfs/usr/bin/gum"
 
@@ -68,8 +88,13 @@ echo "==> Staging installer payload (arch-bootstrap) onto ISO..."
 mkdir -p "$WORK/iso"
 if [ ! -f "$WORK/iso/arch-bootstrap/bin/pacstrap" ]; then
     echo "Downloading Arch Linux bootstrap for the USB installer..."
-    mkdir -p "$WORK/iso/arch-bootstrap"
-    curl -L "https://mirrors.kernel.org/archlinux/iso/latest/archlinux-bootstrap-x86_64.tar.zst" | tar --zstd -xC "$WORK/iso/arch-bootstrap" --strip-components=1
+    # Same atomic dance as gum: a half-extracted bootstrap that happens to
+    # contain bin/pacstrap would pass the cache check and ship a broken
+    # installer payload.
+    rm -rf "$WORK/iso/arch-bootstrap" "$WORK/iso/arch-bootstrap.partial"
+    mkdir -p "$WORK/iso/arch-bootstrap.partial"
+    curl -L "https://mirrors.kernel.org/archlinux/iso/latest/archlinux-bootstrap-x86_64.tar.zst" | tar --zstd -xC "$WORK/iso/arch-bootstrap.partial" --strip-components=1
+    mv "$WORK/iso/arch-bootstrap.partial" "$WORK/iso/arch-bootstrap"
 fi
 
 # Ensure the pacman mirrorlist has at least one active mirror
@@ -95,6 +120,14 @@ mkdir -p "$WORK"/iso/boot/grub
 cp "$KERNEL_BZIMAGE" "$WORK/iso/boot/bzImage"
 cp "$WORK/initramfs.gz" "$WORK/iso/boot/initramfs.gz"
 cp "$REPO_ROOT/iso/grub.cfg" "$WORK/iso/boot/grub/grub.cfg"
+# aegis-install copies these from the mounted boot media onto the installed
+# root (/run/bootmedia/usr/bin/aegis-agent). They only exist inside the
+# initramfs unless staged here too — without this the installed system boots
+# with no agent at all.
+mkdir -p "$WORK/iso/usr/bin"
+cp "$AGENT_BIN" "$WORK/iso/usr/bin/aegis-agent"
+cp "$REPO_ROOT/iso/fake-game" "$WORK/iso/usr/bin/fake-game"
+chmod 755 "$WORK/iso/usr/bin/aegis-agent" "$WORK/iso/usr/bin/fake-game"
 
 echo "==> Building hybrid BIOS/UEFI ISO with grub-mkrescue"
 grub-mkrescue -o "$WORK/aegis-0.1.iso" "$WORK/iso" 2>&1 | tail -2
