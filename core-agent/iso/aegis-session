@@ -29,9 +29,19 @@ if [ ! -e /dev/dri/card0 ]; then
   exit 1
 fi
 
-# Root session, no seatd/logind: libseat's builtin backend takes the seat
-# directly. Software rendering must be allowed — simpledrm has no GPU accel.
-export LIBSEAT_BACKEND=builtin
+# Seat management: Arch builds libseat WITHOUT the builtin backend ("No
+# backend matched name 'builtin'"), so run the seatd daemon and use it.
+# Keep builtin as a fallback for distros that do compile it in.
+if command -v seatd >/dev/null 2>&1; then
+  if ! pgrep -x seatd >/dev/null 2>&1; then
+    seatd 2>/dev/null &
+    sleep 0.5
+  fi
+  export LIBSEAT_BACKEND=seatd
+else
+  export LIBSEAT_BACKEND=builtin
+fi
+# Software rendering must be allowed — simpledrm has no GPU accel.
 export WLR_RENDERER_ALLOW_SOFTWARE=1
 export AEGIS_KIOSK=1
 

@@ -237,7 +237,7 @@ mount -o bind "$MNT/var/cache/pacman/pkg" "$BOOTSTRAP/var/cache/pacman/pkg"
 chroot "$BOOTSTRAP" bash -c "pacman-key --init && pacman-key --populate archlinux"
 chroot "$BOOTSTRAP" bash -c "sed -i 's/^#\[multilib\]/[multilib]/' /etc/pacman.conf"
 chroot "$BOOTSTRAP" bash -c "sed -i '/^\[multilib\]/a Include = /etc/pacman.d/mirrorlist' /etc/pacman.conf"
-chroot "$BOOTSTRAP" bash -c "pacstrap -c /mnt/target base glibc lib32-glibc bash mesa lib32-mesa vulkan-radeon pipewire pipewire-pulse pipewire-alsa wireplumber steam bluez wpa_supplicant ntfs-3g udisks2 grub efibootmgr cage electron dbus ttf-liberation" || fail "pacstrap failed"
+chroot "$BOOTSTRAP" bash -c "pacstrap -c /mnt/target base glibc lib32-glibc bash mesa lib32-mesa vulkan-radeon pipewire pipewire-pulse pipewire-alsa wireplumber steam bluez wpa_supplicant ntfs-3g udisks2 grub efibootmgr cage electron dbus ttf-liberation seatd" || fail "pacstrap failed"
 
 # Cleanup mounts
 umount -l "$BOOTSTRAP/var/cache/pacman/pkg"
