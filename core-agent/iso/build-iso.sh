@@ -28,7 +28,10 @@ echo "==> Staging initramfs tree"
 # so rm doesn't fail or try to delete the host's virtual file systems!
 for mnt in mnt/rootfs dev/pts dev sys proc; do
     if mountpoint -q "$WORK/arch-bootstrap/$mnt" 2>/dev/null; then
-        umount -l "$WORK/arch-bootstrap/$mnt"
+        umount -l "$WORK/arch-bootstrap/$mnt" || true
+    fi
+    if mountpoint -q "$WORK/iso/arch-bootstrap/$mnt" 2>/dev/null; then
+        umount -l "$WORK/iso/arch-bootstrap/$mnt" || true
     fi
 done
 rm -rf "$WORK"
@@ -71,6 +74,21 @@ fi
 
 # Ensure the pacman mirrorlist has at least one active mirror
 sed -i 's/^#Server = https:\/\/mirrors.kernel.org/Server = https:\/\/mirrors.kernel.org/' "$WORK/iso/arch-bootstrap/etc/pacman.d/mirrorlist"
+
+if [ ! -f "$WORK/iso/arch-bootstrap/usr/bin/mkfs.fat" ]; then
+    echo "==> Injecting missing dependencies into arch-bootstrap (dosfstools, e2fsprogs, util-linux)..."
+    mount -t proc proc "$WORK/iso/arch-bootstrap/proc"
+    mount -t sysfs sys "$WORK/iso/arch-bootstrap/sys"
+    mount -o bind /dev "$WORK/iso/arch-bootstrap/dev"
+    cp /etc/resolv.conf "$WORK/iso/arch-bootstrap/etc/resolv.conf"
+    sed -i 's/^CheckSpace/#CheckSpace/' "$WORK/iso/arch-bootstrap/etc/pacman.conf"
+    chroot "$WORK/iso/arch-bootstrap" pacman-key --init
+    chroot "$WORK/iso/arch-bootstrap" pacman-key --populate archlinux
+    chroot "$WORK/iso/arch-bootstrap" pacman -Sy --noconfirm dosfstools e2fsprogs util-linux
+    umount -l "$WORK/iso/arch-bootstrap/dev"
+    umount -l "$WORK/iso/arch-bootstrap/sys"
+    umount -l "$WORK/iso/arch-bootstrap/proc"
+fi
 
 echo "==> Laying out ISO tree"
 mkdir -p "$WORK"/iso/boot/grub
