@@ -62,14 +62,14 @@ resolve_root() {
 # Silence asynchronous kernel logs so they don't overwrite our interactive TUI
 dmesg -n 1
 
-# If booted from the "Install Aegis" menu entry, hand off to the installer and
-# never start the agent — a live/agent boot and an install boot are the same
-# kernel+initramfs, distinguished only by this flag on the command line.
+# If booted from the "Install Aegis" or "Update Aegis" menu entries, hand off
+# and never start the agent — live/install/update boots are the same
+# kernel+initramfs, distinguished only by these flags on the command line.
 for tok in $(cat /proc/cmdline); do
-  if [ "$tok" = "aegis.install" ]; then
-    sleep 2
-    exec cttyhack /usr/bin/aegis-install
-  fi
+  case "$tok" in
+    aegis.install) sleep 2; exec cttyhack /usr/bin/aegis-install ;;
+    aegis.update)  sleep 2; exec cttyhack /usr/bin/aegis-update ;;
+  esac
 done
 
 # Hostname is an install option (aegis.hostname=...), default "aegis".

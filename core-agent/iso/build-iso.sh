@@ -62,6 +62,7 @@ cp "$AGENT_BIN" "$WORK/initramfs/usr/bin/aegis-agent"
 cp "$REPO_ROOT/iso/fake-game" "$WORK/initramfs/usr/bin/fake-game"
 cp "$REPO_ROOT/iso/init" "$WORK/initramfs/init"
 cp "$REPO_ROOT/iso/aegis-install" "$WORK/initramfs/usr/bin/aegis-install"
+cp "$REPO_ROOT/iso/aegis-update" "$WORK/initramfs/usr/bin/aegis-update"
 cp "$REPO_ROOT/iso/udhcpc-script" "$WORK/initramfs/etc/udhcpc.script"
 
 echo "==> Downloading Gum for sleek installer UI..."
@@ -79,6 +80,7 @@ cp "$WORK/gum" "$WORK/initramfs/usr/bin/gum"
 chmod 755 "$WORK/initramfs/init" "$WORK/initramfs/usr/bin/fake-game" \
           "$WORK/initramfs/usr/bin/aegis-agent" "$WORK/initramfs/bin/busybox" \
           "$WORK/initramfs/usr/bin/aegis-install" "$WORK/initramfs/usr/bin/gum" \
+          "$WORK/initramfs/usr/bin/aegis-update" \
           "$WORK/initramfs/etc/udhcpc.script"
 
 echo "==> Packing initramfs (cpio newc, gzip)"

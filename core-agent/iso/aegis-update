@@ -1,0 +1,80 @@
+#!/bin/sh
+# Aegis OS updater. Runs as PID 1 when the kernel is booted with `aegis.update`
+# (the "Update Aegis OS" boot-menu entry). Syncs the Aegis system files from
+# this ISO onto an existing installation — kernel, initramfs, agent, session
+# scripts, frontend — no reinstall, no manual commands. Packages installed by
+# pacstrap are NOT touched; a package-set change still needs a reinstall.
+set -u
+
+/bin/busybox --install -s /bin 2>/dev/null
+mount -t proc none /proc 2>/dev/null
+mount -t sysfs none /sys 2>/dev/null
+mount -t devtmpfs none /dev 2>/dev/null
+
+echo ""
+echo "  =============================================="
+echo "   AEGIS OS updater — sync system files from ISO"
+echo "  =============================================="
+echo ""
+
+bail() { echo ""; echo "  UPDATE FAILED: $1"; echo "  Dropping to a shell."; exec /bin/sh; }
+
+echo "  Locating boot media..."
+mkdir -p /run/bootmedia
+while [ ! -b /dev/sr0 ] && [ ! -b /dev/sda ]; do sleep 0.1; done
+FOUND=""
+for dev in /sys/block/*; do
+    devname="/dev/$(basename "$dev")"
+    mount -o ro "$devname" /run/bootmedia 2>/dev/null || continue
+    if [ -f /run/bootmedia/boot/bzImage ] && [ -d /run/bootmedia/opt/aegis ]; then
+        FOUND="$devname"
+        break
+    fi
+    umount /run/bootmedia 2>/dev/null
+done
+[ -n "$FOUND" ] || bail "could not find the Aegis boot media"
+
+echo "  Locating installed Aegis root (LABEL=AEGIS)..."
+ROOT=""
+i=0
+while [ "$i" -lt 100 ]; do
+    ROOT="$(findfs LABEL=AEGIS 2>/dev/null)"
+    [ -z "$ROOT" ] && ROOT="$(blkid 2>/dev/null | grep -F 'LABEL="AEGIS"' | head -n 1 | cut -d: -f1)"
+    [ -n "$ROOT" ] && [ -b "$ROOT" ] && break
+    ROOT=""
+    i=$((i + 1))
+    sleep 0.1
+done
+[ -n "$ROOT" ] || bail "no partition labeled AEGIS found — is Aegis installed on this machine?"
+
+mkdir -p /mnt/target
+mount "$ROOT" /mnt/target || bail "could not mount $ROOT"
+[ -d /mnt/target/boot ] || { umount /mnt/target; bail "$ROOT does not look like an Aegis root"; }
+
+echo "  Updating kernel + initramfs on $ROOT..."
+cp /run/bootmedia/boot/bzImage /mnt/target/boot/bzImage || bail "kernel copy failed"
+cp /run/bootmedia/boot/initramfs.gz /mnt/target/boot/initramfs.gz || bail "initramfs copy failed"
+
+echo "  Updating agent + session scripts..."
+for f in aegis-agent aegis-init aegis-session fake-game; do
+    if [ -f "/run/bootmedia/usr/bin/$f" ]; then
+        cp "/run/bootmedia/usr/bin/$f" "/mnt/target/usr/bin/$f" || bail "copy of $f failed"
+        chmod 755 "/mnt/target/usr/bin/$f"
+        echo "    updated /usr/bin/$f"
+    fi
+done
+
+echo "  Updating frontend..."
+rm -rf /mnt/target/opt/aegis/frontend
+mkdir -p /mnt/target/opt/aegis
+cp -r /run/bootmedia/opt/aegis/frontend /mnt/target/opt/aegis/frontend || bail "frontend copy failed"
+
+sync
+umount /mnt/target
+
+echo ""
+echo "  Update complete."
+echo "  Remove the ISO from the virtual/physical drive, then power back on."
+echo "  Powering off in 5 seconds..."
+sleep 5
+poweroff -f
