@@ -97,8 +97,20 @@ if [ ! -f "$WORK/iso/arch-bootstrap/bin/pacstrap" ]; then
     mv "$WORK/iso/arch-bootstrap.partial" "$WORK/iso/arch-bootstrap"
 fi
 
-# Ensure the pacman mirrorlist has at least one active mirror
-sed -i 's/^#Server = https:\/\/mirrors.kernel.org/Server = https:\/\/mirrors.kernel.org/' "$WORK/iso/arch-bootstrap/etc/pacman.d/mirrorlist"
+# Several mirrors, not one: with only mirrors.kernel.org enabled, a single
+# throttled mirror ("Operation too slow") killed pacstrap mid-install with no
+# fallback. geo.mirror.pkgbuild.com geo-routes to something nearby.
+cat > "$WORK/iso/arch-bootstrap/etc/pacman.d/mirrorlist" <<'MIRRORS'
+Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch
+Server = https://mirror.rackspace.com/archlinux/$repo/os/$arch
+Server = https://mirrors.kernel.org/archlinux/$repo/os/$arch
+Server = https://mirror.leaseweb.net/archlinux/$repo/os/$arch
+MIRRORS
+# Don't give up on a slow-but-alive download (pacman's low-speed timeout is
+# what produced "Less than 1 bytes/sec"), and fetch in parallel.
+sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 5/' "$WORK/iso/arch-bootstrap/etc/pacman.conf"
+grep -q '^DisableDownloadTimeout' "$WORK/iso/arch-bootstrap/etc/pacman.conf" \
+  || sed -i '/^\[options\]/a DisableDownloadTimeout' "$WORK/iso/arch-bootstrap/etc/pacman.conf"
 
 if [ ! -f "$WORK/iso/arch-bootstrap/usr/bin/mkfs.fat" ]; then
     echo "==> Injecting missing dependencies into arch-bootstrap (dosfstools, e2fsprogs, util-linux)..."
