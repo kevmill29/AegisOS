@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Aegis OS installed-system PID 1. init (initramfs) switch_roots to this after
+# mounting the real root. Duties: base mounts, start the core agent in its
+# cgroup, then supervise the UI — kiosk session by default, respawning console
+# shell as fallback (and forever-fallback if the session crashloops).
+#
+# Kernel cmdline knobs (baked in by the installer / editable in grub.cfg):
+#   aegis.boot=headless   agent only, no UI, no shell
+#   aegis.ui=console      skip the kiosk, console shell only
+
+mount -t tmpfs tmpfs /run 2>/dev/null
+mkdir -p /run/lock
+# Chromium/Electron hard-requires /dev/shm; devpts for its child ptys.
+mount -t tmpfs tmpfs /dev/shm 2>/dev/null
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts 2>/dev/null
+mount -t tmpfs tmpfs /tmp 2>/dev/null
+
+mkdir -p /sys/fs/cgroup/aegis
+( echo $BASHPID > /sys/fs/cgroup/aegis/cgroup.procs 2>/dev/null
+  exec env RUST_LOG=info /usr/bin/aegis-agent >/dev/console 2>&1 ) &
+echo "  aegis-agent started (cgroup: /sys/fs/cgroup/aegis)"
+
+if grep -qw aegis.boot=headless /proc/cmdline; then
+  echo "  boot mode: headless — agent only, no UI"
+  while true; do sleep 3600; done
+fi
+
+# Session supervisor. A session that dies within 20s three times in a row is
+# treated as broken (no KMS, missing packages, …) and we stop burning the CPU
+# on it — console shell from then on. PID 1 must never exit: kernel panic.
+fails=0
+while true; do
+  if [ -x /usr/bin/aegis-session ] && [ "$fails" -lt 3 ] \
+     && ! grep -qw aegis.ui=console /proc/cmdline; then
+    echo "  starting Aegis kiosk session"
+    t0=$SECONDS
+    /usr/bin/aegis-session >/dev/console 2>&1
+    if [ $((SECONDS - t0)) -lt 20 ]; then
+      fails=$((fails + 1))
+      [ "$fails" -ge 3 ] && echo "  kiosk session crashlooping — falling back to console shell"
+    else
+      fails=0
+    fi
+    sleep 1
+  else
+    setsid -c /usr/bin/bash </dev/console >/dev/console 2>&1
+    sleep 1
+  fi
+done

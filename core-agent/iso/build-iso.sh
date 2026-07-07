@@ -19,7 +19,8 @@ OUT_DIR="$(dirname "$REPO_ROOT")/dist"
 # and symlink semantics that DrvFs doesn't reliably provide.
 WORK=/root/aegis/iso-build
 
-for f in "$KERNEL_BZIMAGE" "$AGENT_BIN" /usr/bin/busybox; do
+FRONTEND_DIR="$(dirname "$REPO_ROOT")/frontend"
+for f in "$KERNEL_BZIMAGE" "$AGENT_BIN" /usr/bin/busybox "$FRONTEND_DIR/dist/index.html"; do
   [ -f "$f" ] || { echo "missing input: $f" >&2; exit 1; }
 done
 
@@ -139,7 +140,15 @@ cp "$REPO_ROOT/iso/grub.cfg" "$WORK/iso/boot/grub/grub.cfg"
 mkdir -p "$WORK/iso/usr/bin"
 cp "$AGENT_BIN" "$WORK/iso/usr/bin/aegis-agent"
 cp "$REPO_ROOT/iso/fake-game" "$WORK/iso/usr/bin/fake-game"
-chmod 755 "$WORK/iso/usr/bin/aegis-agent" "$WORK/iso/usr/bin/fake-game"
+cp "$REPO_ROOT/iso/aegis-init" "$WORK/iso/usr/bin/aegis-init"
+cp "$REPO_ROOT/iso/aegis-session" "$WORK/iso/usr/bin/aegis-session"
+chmod 755 "$WORK/iso/usr/bin/aegis-agent" "$WORK/iso/usr/bin/fake-game" \
+          "$WORK/iso/usr/bin/aegis-init" "$WORK/iso/usr/bin/aegis-session"
+# Frontend app for the installed kiosk: Electron loads the package dir
+# (package.json main -> electron/main.cjs -> dist/index.html).
+mkdir -p "$WORK/iso/opt/aegis/frontend"
+cp "$FRONTEND_DIR/package.json" "$WORK/iso/opt/aegis/frontend/"
+cp -r "$FRONTEND_DIR/electron" "$FRONTEND_DIR/dist" "$WORK/iso/opt/aegis/frontend/"
 
 echo "==> Building hybrid BIOS/UEFI ISO with grub-mkrescue"
 grub-mkrescue -o "$WORK/aegis-0.1.iso" "$WORK/iso" 2>&1 | tail -2

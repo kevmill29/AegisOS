@@ -128,7 +128,11 @@ if [ -n "$ROOT_DEV" ]; then
     # Everything runs AFTER switch_root, inside the installed root, as PID 1.
     # Launching the agent before switch_root (the old way) raced it: switch_root
     # tore /newroot out from under the backgrounded chroot before it exec'd.
-    # The shell respawns in a loop — PID 1 exiting means a kernel panic.
+    # aegis-init (installed by the installer) supervises agent + kiosk UI;
+    # the inline fallback below covers systems installed before it existed.
+    if [ -x /newroot/usr/bin/aegis-init ]; then
+        exec switch_root /newroot /usr/bin/aegis-init
+    fi
     exec switch_root /newroot /usr/bin/bash -c "
       mount -t tmpfs tmpfs /run 2>/dev/null
       mkdir -p /sys/fs/cgroup/aegis

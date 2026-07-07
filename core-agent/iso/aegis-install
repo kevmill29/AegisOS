@@ -237,7 +237,7 @@ mount -o bind "$MNT/var/cache/pacman/pkg" "$BOOTSTRAP/var/cache/pacman/pkg"
 chroot "$BOOTSTRAP" bash -c "pacman-key --init && pacman-key --populate archlinux"
 chroot "$BOOTSTRAP" bash -c "sed -i 's/^#\[multilib\]/[multilib]/' /etc/pacman.conf"
 chroot "$BOOTSTRAP" bash -c "sed -i '/^\[multilib\]/a Include = /etc/pacman.d/mirrorlist' /etc/pacman.conf"
-chroot "$BOOTSTRAP" bash -c "pacstrap -c /mnt/target base glibc lib32-glibc bash mesa lib32-mesa vulkan-radeon pipewire pipewire-pulse pipewire-alsa wireplumber steam bluez wpa_supplicant ntfs-3g udisks2 grub efibootmgr" || fail "pacstrap failed"
+chroot "$BOOTSTRAP" bash -c "pacstrap -c /mnt/target base glibc lib32-glibc bash mesa lib32-mesa vulkan-radeon pipewire pipewire-pulse pipewire-alsa wireplumber steam bluez wpa_supplicant ntfs-3g udisks2 grub efibootmgr cage electron dbus ttf-liberation" || fail "pacstrap failed"
 
 # Cleanup mounts
 umount -l "$BOOTSTRAP/var/cache/pacman/pkg"
@@ -258,6 +258,16 @@ cp /run/bootmedia/usr/bin/aegis-agent "$MNT/usr/bin/aegis-agent" \
 cp /run/bootmedia/usr/bin/fake-game "$MNT/usr/bin/fake-game" 2>/dev/null || true
 chmod 755 "$MNT/usr/bin/aegis-agent"
 
+# Phase 3 kiosk: installed PID 1 + session launcher + the Electron frontend.
+for f in aegis-init aegis-session; do
+  cp "/run/bootmedia/usr/bin/$f" "$MNT/usr/bin/$f" \
+    || fail "$f missing from boot media (rebuild the ISO)"
+  chmod 755 "$MNT/usr/bin/$f"
+done
+mkdir -p "$MNT/opt/aegis"
+cp -r /run/bootmedia/opt/aegis/frontend "$MNT/opt/aegis/frontend" \
+  || fail "frontend payload missing from boot media (rebuild the ISO)"
+
 gum style --foreground 105 "  [7/7] Installing GRUB (UEFI)..."
 mount -t proc /proc "$MNT/proc"
 mount -t sysfs /sys "$MNT/sys"
@@ -269,7 +279,9 @@ chroot "$MNT" bash -c "grub-install --target=x86_64-efi --efi-directory=/boot/ef
 # /dev/sdX slot, so the raw partition name recorded here (e.g. /dev/sdb2)
 # often points at nothing once the stick is removed and the disks reshuffle.
 # Both format paths above label the root filesystem AEGIS; init resolves it.
-APPEND="console=$CONSOLE aegis.hostname=$HOSTNAME root=LABEL=AEGIS nomodeset earlycon=efifb"
+# No nomodeset: the kiosk compositor needs KMS (/dev/dri/card0); fbcon stays
+# visible through DRM fbdev emulation.
+APPEND="console=$CONSOLE aegis.hostname=$HOSTNAME root=LABEL=AEGIS earlycon=efifb"
 [ "$BOOTMODE" = "headless" ] && APPEND="$APPEND aegis.boot=headless"
 
 cat > "$MNT/boot/grub/grub.cfg" <<EOF

@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Aegis OS graphical session: cage (Wayland kiosk) running the Electron
+# frontend fullscreen — the Phase 3 "working path" from launch-kiosk.sh,
+# now booted on the real target instead of a dev desktop.
+# Runs as root under aegis-init; exits (and is respawned/judged) on failure.
+set -u
+
+export HOME=/root
+export XDG_RUNTIME_DIR=/run/aegis
+mkdir -p "$XDG_RUNTIME_DIR"
+chmod 0700 "$XDG_RUNTIME_DIR"
+
+# There is no systemd running: bring up udev by hand so libinput can
+# enumerate keyboards/mice and the DRM device gets its /dev node.
+if ! pgrep -x systemd-udevd >/dev/null 2>&1; then
+  /usr/lib/systemd/systemd-udevd --daemon 2>/dev/null
+  udevadm trigger --action=add 2>/dev/null
+  udevadm settle --timeout=10 2>/dev/null
+fi
+
+# Give the DRM device a moment on slow VMs, then bail with a clear message —
+# aegis-init counts fast exits and falls back to the console shell.
+for _ in $(seq 1 20); do
+  [ -e /dev/dri/card0 ] && break
+  sleep 0.5
+done
+if [ ! -e /dev/dri/card0 ]; then
+  echo "aegis-session: no /dev/dri/card0 — kernel has no KMS driver for this GPU" >&2
+  exit 1
+fi
+
+# Root session, no seatd/logind: libseat's builtin backend takes the seat
+# directly. Software rendering must be allowed — simpledrm has no GPU accel.
+export LIBSEAT_BACKEND=builtin
+export WLR_RENDERER_ALLOW_SOFTWARE=1
+export AEGIS_KIOSK=1
+
+# Electron as root needs --no-sandbox; native Wayland via ozone. dbus-run-session
+# gives Chromium the session bus it expects (cuts startup stalls and warnings).
+exec dbus-run-session -- cage -- electron /opt/aegis/frontend \
+  --no-sandbox \
+  --ozone-platform=wayland \
+  --enable-features=UseOzonePlatform,WaylandWindowDecorations \
+  --disable-gpu-compositing
