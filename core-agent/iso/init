@@ -35,7 +35,7 @@ dmesg -n 1
 for tok in $(cat /proc/cmdline); do
   if [ "$tok" = "aegis.install" ]; then
     sleep 2
-    exec setsid cttyhack /usr/bin/aegis-install
+    exec cttyhack /usr/bin/aegis-install
   fi
 done
 
