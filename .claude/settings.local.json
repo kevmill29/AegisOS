@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wsl --list --verbose)",
+      "Bash(wsl -e cat /etc/os-release)",
+      "PowerShell(wsl -d Ubuntu -e bash -lc \"cat /etc/os-release; echo ---; which cargo rustc git; echo ---; uname -a\")",
+      "PowerShell(wsl -d Ubuntu -e bash -lc \"ls /sys/fs/cgroup | head -5; echo ---; cat /sys/fs/cgroup/cgroup.controllers 2>&1; echo ---; ls -d /mnt/c/Users/Kevin/projectsclaude 2>&1\")",
+      "PowerShell(wsl -d Ubuntu -e bash -lc \"command -v cargo || \\(curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable\\) ; source \\\\$HOME/.cargo/env; rustc --version; cargo --version\")",
+      "PowerShell(wsl -d Ubuntu -e bash -lc 'source $HOME/.cargo/env; rustc --version; cargo --version')"
+    ]
+  }
+}

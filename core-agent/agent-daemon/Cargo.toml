@@ -1,0 +1,28 @@
+[package]
+name = "agent-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "aegis-agent"
+path = "src/main.rs"
+
+[features]
+# LLM-driven throttle policy is opt-in: it pulls ureq (TLS) and is only useful
+# where Ollama or a cloud key exists. The default build — including the static
+# musl binary baked into the ISO — stays lean and network-free without it.
+default = []
+llm = ["dep:llm-orchestrator"]
+
+[dependencies]
+process-monitor = { path = "../process-monitor" }
+cgroup-ctl = { path = "../cgroup-ctl" }
+steam-integration = { path = "../steam-integration" }
+llm-orchestrator = { path = "../llm-orchestrator", optional = true }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true

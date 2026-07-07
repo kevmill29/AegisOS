@@ -1,0 +1,24 @@
+[package]
+name = "aegis-compositor"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Aegis custom Wayland compositor (Smithay) — Phase 3, kiosk successor to cage"
+
+[[bin]]
+name = "aegis-compositor"
+path = "src/main.rs"
+
+[dependencies]
+# Winit backend keeps the scaffold buildable and runnable inside an existing
+# Wayland/X session (WSLg included) without needing DRM/KMS + a seat, which the
+# udev backend would demand. The bare-metal target swaps this for the udev
+# backend at Phase 3 completion — the compositor logic above the backend is
+# meant to be backend-agnostic.
+smithay = { version = "0.3", default-features = false, features = [
+    "backend_winit",
+    "renderer_gl",
+    "wayland_frontend",
+] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

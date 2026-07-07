@@ -1,0 +1,237 @@
+#!/bin/sh
+# Aegis OS installer. Runs as PID 1 when the kernel is booted with `aegis.install`
+# on its command line (the "Install Aegis" boot-menu entry). Installs a bootable
+# copy of Aegis to a target disk via extlinux (BIOS boot), baking the user's
+# chosen options into the on-disk bootloader's APPEND line.
+#
+# Two modes:
+#   interactive (default) — a guided text menu, for a person at the keyboard.
+#   scripted             — driven entirely by kernel cmdline for unattended
+#                          installs and CI/QEMU testing:
+#     aegis.install aegis.auto aegis.target=/dev/sda \
+#       aegis.hostname=aegis-rig aegis.boot=shell aegis.console=tty0
+#
+# The installed system runs the *same* kernel + RAM-based initramfs as the live
+# image — "install" means "make this disk boot Aegis," not "unpack a root fs."
+
+set -u
+BZIMAGE=/install/bzImage
+INITRAMFS=/install/initramfs.gz
+MBR_BIN=/install/mbr.bin
+LDLINUX=/install/ldlinux.c32
+MNT=/mnt/target
+
+# --- minimal runtime bring-up (installer initramfs, same base as live init) ---
+/bin/busybox --install -s /bin 2>/dev/null
+mount -t proc none /proc 2>/dev/null
+mount -t sysfs none /sys 2>/dev/null
+mount -t devtmpfs none /dev 2>/dev/null
+mkdir -p /tmp "$MNT"
+mount -t tmpfs none /tmp 2>/dev/null
+
+echo "  Bringing up networking..."
+ifconfig lo 127.0.0.1 up
+for iface in /sys/class/net/*; do
+  iface="$(basename "$iface")"
+  case "$iface" in
+    lo) ;;
+    *) ifconfig "$iface" up 2>/dev/null
+       udhcpc -b -i "$iface" -s /etc/udhcpc.script -t 3 -T 3 >/dev/null 2>&1 &
+       ;;
+  esac
+done
+
+echo "  Mounting installation medium..."
+mkdir -p /run/bootmedia
+while [ ! -b /dev/sr0 ] && [ ! -b /dev/sda ]; do sleep 0.1; done
+mount -o ro /dev/sr0 /run/bootmedia 2>/dev/null || mount -o ro /dev/sda /run/bootmedia 2>/dev/null
+
+cmdline_val() {
+  for tok in $(cat /proc/cmdline); do
+    case "$tok" in "$1"=*) echo "${tok#*=}"; return;; esac
+  done
+}
+has_flag() {
+  for tok in $(cat /proc/cmdline); do [ "$tok" = "$1" ] && return 0; done
+  return 1
+}
+
+banner() {
+  clear
+  gum style --border double --margin "1" --padding "1 2" --foreground 212 --border-foreground 212 "AEGIS OS NetInstaller"
+}
+
+# Candidate target disks: whole block devices only (sd*, vd*, nvme*), never
+# partitions, loop, ram, or the boot media (sr*).
+list_disks() {
+  for d in /sys/block/*; do
+    name="$(basename "$d")"
+    case "$name" in
+      sd*|vd*|nvme*)
+        sectors="$(cat "$d/size" 2>/dev/null || echo 0)"
+        mb=$(( sectors / 2048 ))
+        echo "$name ${mb}MB"
+        ;;
+    esac
+  done
+}
+
+fail() { echo ""; gum style --foreground 196 "  INSTALL FAILED: $1"; echo ""; exec /bin/sh; }
+
+# ------------------------------- collect options ------------------------------
+if has_flag aegis.auto; then
+  INSTALL_MODE="disk"
+  TARGET="$(cmdline_val aegis.target)"
+  HOSTNAME="$(cmdline_val aegis.hostname)"; : "${HOSTNAME:=aegis}"
+  BOOTMODE="$(cmdline_val aegis.boot)";     : "${BOOTMODE:=shell}"
+  CONSOLE="$(cmdline_val aegis.console)";   : "${CONSOLE:=tty0}"
+  [ -n "$TARGET" ] || fail "aegis.auto requires aegis.target=/dev/XXX"
+  echo "  scripted install: target=$TARGET host=$HOSTNAME boot=$BOOTMODE console=$CONSOLE"
+else
+  banner
+  
+  gum style --foreground 212 "Installation Mode:"
+  I_MODE=$(gum choose "Erase Entire Disk (Creates UEFI and Root partitions)" "Install to Specific Partition (Keep existing data, dual-boot)")
+  case "$I_MODE" in *"Specific"*) INSTALL_MODE="partition";; *) INSTALL_MODE="disk";; esac
+
+  if [ "$INSTALL_MODE" = "disk" ]; then
+      gum style --foreground 212 "Select Target Disk to ERASE:"
+      TARGET_NAME=$(list_disks | gum choose | awk '{print $1}')
+      TARGET="/dev/$TARGET_NAME"
+      [ -b "$TARGET" ] || fail "$TARGET is not a block device"
+  else
+      gum style --foreground 212 "Select Target ROOT Partition to FORMAT as ext4:"
+      TARGET_ROOT_NAME=$(grep -v "loop" /proc/partitions | awk 'NR>2 {print $4 " (" int($3/1024) "MB)"}' | gum choose | awk '{print $1}')
+      PART_ROOT="/dev/$TARGET_ROOT_NAME"
+      [ -b "$PART_ROOT" ] || fail "$PART_ROOT is not a block device"
+      
+      gum style --foreground 212 "Select Target EFI System Partition to mount:"
+      TARGET_EFI_NAME=$(grep -v "loop" /proc/partitions | awk 'NR>2 {print $4 " (" int($3/1024) "MB)"}' | gum choose | awk '{print $1}')
+      PART_EFI="/dev/$TARGET_EFI_NAME"
+      [ -b "$PART_EFI" ] || fail "$PART_EFI is not a block device"
+  fi
+
+  gum style --foreground 212 "Enter Hostname:"
+  HOSTNAME=$(gum input --placeholder "Hostname" --value "aegis")
+  : "${HOSTNAME:=aegis}"
+
+  gum style --foreground 212 "Select Boot Mode:"
+  BM=$(gum choose "Agent + Console Shell (Default)" "Headless Appliance (Agent only, no shell)")
+  case "$BM" in *"Headless"*) BOOTMODE=headless;; *) BOOTMODE=shell;; esac
+
+  gum style --foreground 212 "Select Console Output:"
+  CN=$(gum choose "Screen / Keyboard (tty0, Default)" "Serial (ttyS0, Headless boxes)")
+  case "$CN" in *"Serial"*) CONSOLE=ttyS0;; *) CONSOLE=tty0;; esac
+
+  clear
+  if [ "$INSTALL_MODE" = "disk" ]; then
+      gum style --border normal --margin "1" --padding "1 2" --border-foreground 196 \
+        "WARNING: About to permanently ERASE $TARGET and install Aegis OS." \
+        "Hostname: $HOSTNAME" "Boot Mode: $BOOTMODE" "Console: $CONSOLE"
+  else
+      gum style --border normal --margin "1" --padding "1 2" --border-foreground 196 \
+        "WARNING: About to FORMAT $PART_ROOT and install Aegis OS. (EFI on $PART_EFI)" \
+        "Hostname: $HOSTNAME" "Boot Mode: $BOOTMODE" "Console: $CONSOLE"
+  fi
+  
+  if ! gum confirm "Are you absolutely sure you want to proceed?"; then
+      fail "cancelled by user"
+  fi
+fi
+
+# ------------------------------- do the install -------------------------------
+echo ""
+if [ "$INSTALL_MODE" = "disk" ]; then
+gum style --foreground 105 "  [1/7] Partitioning $TARGET (UEFI ESP + Linux Root)..."
+    printf 'label: gpt\n,512M,U\n,,L\n' | sfdisk --quiet "$TARGET" || fail "sfdisk failed"
+    blockdev --rereadpt "$TARGET" 2>/dev/null
+    sleep 1
+
+    case "$TARGET" in
+      *[0-9]) PART_EFI="${TARGET}p1"; PART_ROOT="${TARGET}p2" ;;
+      *)      PART_EFI="${TARGET}1"; PART_ROOT="${TARGET}2" ;;
+    esac
+    [ -b "$PART_ROOT" ] || { sleep 1; }
+    [ -b "$PART_ROOT" ] || fail "partition $PART_ROOT did not appear"
+
+    gum style --foreground 105 "  [2/7] Formatting partitions..."
+    mkfs.fat -F32 "$PART_EFI" || fail "mkfs.fat failed"
+    mkfs.ext4 -q -F -L AEGIS "$PART_ROOT" || fail "mkfs.ext4 failed"
+else
+    gum style --foreground 105 "  [1/7] Skipping partitioning (using user-selected partitions)..."
+    gum style --foreground 105 "  [2/7] Formatting ROOT partition $PART_ROOT as ext4..."
+    mkfs.ext4 -q -F -L AEGIS "$PART_ROOT" || fail "mkfs.ext4 failed"
+fi
+
+gum style --foreground 105 "  [3/7] Mounting partitions..."
+mount "$PART_ROOT" "$MNT" || fail "mount root failed"
+mkdir -p "$MNT/boot/efi"
+mount "$PART_EFI" "$MNT/boot/efi" || fail "mount efi failed"
+
+gum style --foreground 105 "  [4/7] Copying installer toolkit to RAM..."
+cp -a /run/bootmedia/arch-bootstrap /tmp/ || fail "arch-bootstrap not found on media"
+
+gum style --foreground 105 "  [5/7] Installing base OS via pacstrap (downloading packages)..."
+# Prepare chroot
+BOOTSTRAP="/tmp/arch-bootstrap"
+mkdir -p "$BOOTSTRAP/mnt/target"
+mount -o bind "$MNT" "$BOOTSTRAP/mnt/target"
+mount -t proc /proc "$BOOTSTRAP/proc"
+mount -t sysfs /sys "$BOOTSTRAP/sys"
+mount -o bind /dev "$BOOTSTRAP/dev"
+cp /etc/resolv.conf "$BOOTSTRAP/etc/resolv.conf" 2>/dev/null || echo "nameserver 8.8.8.8" > "$BOOTSTRAP/etc/resolv.conf"
+
+# Init pacman and install
+chroot "$BOOTSTRAP" bash -c "pacman-key --init && pacman-key --populate archlinux"
+chroot "$BOOTSTRAP" bash -c "sed -i 's/^#\[multilib\]/[multilib]/' /etc/pacman.conf"
+chroot "$BOOTSTRAP" bash -c "sed -i '/^\[multilib\]/a Include = /etc/pacman.d/mirrorlist' /etc/pacman.conf"
+chroot "$BOOTSTRAP" bash -c "pacstrap -c /mnt/target base glibc lib32-glibc bash mesa lib32-mesa vulkan-radeon pipewire pipewire-pulse pipewire-alsa wireplumber steam bluez wpa_supplicant ntfs-3g udisks2 grub efibootmgr" || fail "pacstrap failed"
+
+# Cleanup mounts
+umount -l "$BOOTSTRAP/mnt/target"
+umount -l "$BOOTSTRAP/dev"
+umount -l "$BOOTSTRAP/sys"
+umount -l "$BOOTSTRAP/proc"
+
+gum style --foreground 105 "  [6/7] Copying kernel + initramfs..."
+mkdir -p "$MNT/boot/grub"
+cp "$BZIMAGE" "$MNT/boot/bzImage" || fail "copy kernel failed"
+cp "$INITRAMFS" "$MNT/boot/initramfs.gz" || fail "copy initramfs failed"
+cp /run/bootmedia/usr/bin/aegis-agent "$MNT/usr/bin/aegis-agent" 2>/dev/null || true
+
+gum style --foreground 105 "  [7/7] Installing GRUB (UEFI)..."
+mount -t proc /proc "$MNT/proc"
+mount -t sysfs /sys "$MNT/sys"
+mount -o bind /dev "$MNT/dev"
+
+chroot "$MNT" bash -c "grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Aegis --removable" || fail "grub-install failed"
+
+APPEND="console=$CONSOLE aegis.hostname=$HOSTNAME root=$PART_ROOT nomodeset earlycon=efifb"
+[ "$BOOTMODE" = "headless" ] && APPEND="$APPEND aegis.boot=headless"
+
+cat > "$MNT/boot/grub/grub.cfg" <<EOF
+set timeout=5
+menuentry "Aegis OS" {
+  linux /boot/bzImage $APPEND
+  initrd /boot/initramfs.gz
+}
+EOF
+
+umount -l "$MNT/dev"
+umount -l "$MNT/sys"
+umount -l "$MNT/proc"
+sync
+umount -l "$MNT/boot/efi" 2>/dev/null
+umount -l "$MNT" 2>/dev/null
+
+gum style --border double --margin "1" --padding "1 2" --foreground 212 --border-foreground 212 "Aegis installed successfully." "Remove the USB stick and reboot."
+
+if has_flag aegis.auto; then
+  # Signal success clearly for the automated test harness, then power off so
+  # QEMU exits and the next stage can boot the freshly-installed disk.
+  echo "AEGIS_INSTALL_OK"
+  poweroff -f
+else
+  printf "  Press Enter to power off... "; read _
+  poweroff -f
+fi

@@ -1,0 +1,10 @@
+#!/bin/sh
+# Simulates a Proton game session for 10 seconds so the agent's detection can
+# be demonstrated live on a booted Aegis image. Mirrors the shape Proton uses:
+# a process whose comm is "reaper" with SteamLaunch/AppId argv. A shell script
+# named "reaper" gets exactly that comm — same trick the WSL2 test bench uses.
+printf '#!/bin/sh\nsleep 10\n' > /tmp/reaper
+chmod +x /tmp/reaper
+echo "launching fake game (AppId=730) for 10 seconds..."
+/tmp/reaper SteamLaunch AppId=730 -- proton waitforexitandrun /fake/game.exe
+echo "fake game exited."

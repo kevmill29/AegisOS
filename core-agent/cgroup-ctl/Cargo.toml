@@ -1,0 +1,13 @@
+[package]
+name = "cgroup-ctl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+process-monitor = { path = "../process-monitor" }
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

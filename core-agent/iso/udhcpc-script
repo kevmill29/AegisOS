@@ -1,0 +1,23 @@
+#!/bin/sh
+# udhcpc hook: busybox's DHCP client calls this with $1 = deconfig|bound|renew
+# and the lease details in env vars. This is the entire "network manager" of
+# Aegis OS v0.1 — deliberately: DHCP on wired ethernet covers the dev bench
+# and most living-room setups; WiFi needs wpa_supplicant + firmware and is
+# explicitly Phase 2 userland territory.
+case "$1" in
+  deconfig)
+    ifconfig "$interface" 0.0.0.0
+    ;;
+  bound|renew)
+    ifconfig "$interface" "$ip" netmask "${subnet:-255.255.255.0}"
+    if [ -n "$router" ]; then
+      route del default 2>/dev/null
+      route add default gw "$router" dev "$interface"
+    fi
+    : > /etc/resolv.conf
+    for ns in $dns; do
+      echo "nameserver $ns" >> /etc/resolv.conf
+    done
+    echo "net: $interface up at $ip (gw ${router:-none}, dns ${dns:-none})" > /dev/console
+    ;;
+esac

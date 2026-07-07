@@ -1,0 +1,23 @@
+[Unit]
+Description=Aegis Core Agent
+After=network.target
+
+[Service]
+Type=simple
+Slice=aegis.slice
+Delegate=yes
+ExecStart=/usr/local/bin/aegis-agent
+Restart=on-failure
+RestartSec=2
+
+# Defense in depth alongside process-monitor::ProtectedSet: even if the agent's
+# own logic had a bug, these deny it the OS-level capabilities that logic exists
+# to avoid using in the first place. Remove/relax only if a future feature
+# genuinely needs it, not by default.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
