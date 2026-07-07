@@ -41,8 +41,12 @@ if command -v seatd >/dev/null 2>&1; then
 else
   export LIBSEAT_BACKEND=builtin
 fi
-# Software rendering must be allowed — simpledrm has no GPU accel.
+# Software rendering must be allowed — simpledrm has no GPU accel. And force
+# the pixman renderer outright: VM GPUs (vmwgfx et al) fail EGL device
+# creation ("eglQueryDevicesEXT: Failed to allocate device"), and pixman
+# needs no EGL at all. Electron software-renders into shm buffers anyway.
 export WLR_RENDERER_ALLOW_SOFTWARE=1
+export WLR_RENDERER=pixman
 export AEGIS_KIOSK=1
 
 # Electron as root needs --no-sandbox; native Wayland via ozone. dbus-run-session
