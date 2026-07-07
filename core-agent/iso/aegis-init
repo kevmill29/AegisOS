@@ -26,6 +26,32 @@ if grep -qw aegis.boot=headless /proc/cmdline; then
   while true; do sleep 3600; done
 fi
 
+# Debug mode (aegis.ui=debug, own GRUB entry added by aegis-update): run ONE
+# kiosk session for at most 45s — enough to reproduce a hang — then kill it,
+# dump the session log to the screen, and hand over the console. For sessions
+# that wedge with a live compositor (black screen, cursor moves), where the
+# crashloop fallback never fires and the log stays invisible.
+if grep -qw aegis.ui=debug /proc/cmdline; then
+  echo "  DEBUG: running one kiosk session (45s max), then dumping its log"
+  /usr/bin/aegis-session >/dev/console 2>&1 &
+  spid=$!
+  n=0
+  while [ "$n" -lt 45 ] && kill -0 "$spid" 2>/dev/null; do sleep 1; n=$((n + 1)); done
+  kill "$spid" 2>/dev/null
+  pkill -f electron 2>/dev/null
+  pkill -x cage 2>/dev/null
+  pkill -x seatd 2>/dev/null
+  sleep 2
+  echo ""
+  echo "  --- /var/log/aegis-session.log (last 40 lines) ---"
+  tail -n 40 /var/log/aegis-session.log 2>/dev/null
+  echo "  --------------------------------------------------"
+  while true; do
+    setsid -c /usr/bin/bash </dev/console >/dev/console 2>&1
+    sleep 1
+  done
+fi
+
 # Session supervisor. A session that dies within 20s three times in a row is
 # treated as broken (no KMS, missing packages, …) and we stop burning the CPU
 # on it — console shell from then on. PID 1 must never exit: kernel panic.

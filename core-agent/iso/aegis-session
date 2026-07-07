@@ -57,6 +57,9 @@ export AEGIS_KIOSK=1
 # when it matters; aegis-init prints this log's tail on crashloop fallback.
 mkdir -p /var/log
 echo "--- aegis-session $(date 2>/dev/null) ---" >> /var/log/aegis-session.log
+# Route Chromium's own stderr logging into the same file — without this an
+# Electron that hangs before mapping a window leaves no trace at all.
+export ELECTRON_ENABLE_LOGGING=1
 exec dbus-run-session -- cage -- electron /opt/aegis/frontend \
   --no-sandbox \
   --ozone-platform=wayland \

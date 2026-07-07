@@ -69,6 +69,24 @@ rm -rf /mnt/target/opt/aegis/frontend
 mkdir -p /mnt/target/opt/aegis
 cp -r /run/bootmedia/opt/aegis/frontend /mnt/target/opt/aegis/frontend || bail "frontend copy failed"
 
+# Add a debug boot entry (one 45s kiosk attempt, then log dump + console) so
+# a wedged-but-alive session can be diagnosed without any typed commands.
+# Clones the installed entry's kernel line to keep its baked-in options.
+GC=/mnt/target/boot/grub/grub.cfg
+if [ -f "$GC" ] && ! grep -q 'aegis.ui=debug' "$GC"; then
+    KLINE="$(grep -m1 '^[[:space:]]*linux ' "$GC")"
+    if [ -n "$KLINE" ]; then
+        cat >> "$GC" <<ENTRY
+
+menuentry "Aegis OS (debug: dump kiosk session log)" {
+$KLINE aegis.ui=debug
+  initrd /boot/initramfs.gz
+}
+ENTRY
+        echo "    added 'debug' boot menu entry"
+    fi
+fi
+
 sync
 umount /mnt/target
 
