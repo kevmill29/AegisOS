@@ -41,6 +41,39 @@ if command -v seatd >/dev/null 2>&1; then
 else
   export LIBSEAT_BACKEND=builtin
 fi
+
+# Audio: bring up PipeWire so games actually have an output sink (and the
+# sphere has a real source to react to later). All non-fatal — with no audio
+# the session still runs and the sphere falls back to its synthetic beat.
+# Sockets live under XDG_RUNTIME_DIR (set above); wireplumber is the session/
+# policy manager, and pipewire-pulse gives Chromium/Electron a PulseAudio
+# server to talk to. Started before the frontend so the socket exists when
+# Electron probes for audio, and outside dbus-run-session on purpose — routing
+# is via the XDG_RUNTIME_DIR socket, which the frontend inherits regardless.
+if command -v pipewire >/dev/null 2>&1 && ! pgrep -x pipewire >/dev/null 2>&1; then
+  mkdir -p /var/log
+  pipewire       >/var/log/aegis-audio.log 2>&1 &
+  sleep 0.5
+  wireplumber    >>/var/log/aegis-audio.log 2>&1 &
+  pipewire-pulse >>/var/log/aegis-audio.log 2>&1 &
+
+  # Point the default capture source at the default sink's monitor, so the
+  # frontend's getUserMedia() hears what's playing (game/music) instead of a
+  # (nonexistent) microphone. Best-effort and backgrounded: wait for the sink
+  # and its monitor to exist, set it, and give up quietly after 20s. pactl
+  # ships with libpulse; the "<sink>.monitor" name is pipewire-pulse's standard
+  # monitor naming.
+  (
+    for _ in $(seq 1 20); do
+      sink="$(pactl get-default-sink 2>/dev/null)"
+      if [ -n "$sink" ] && pactl list short sources 2>/dev/null | grep -q "${sink}.monitor"; then
+        pactl set-default-source "${sink}.monitor" 2>/dev/null && break
+      fi
+      sleep 1
+    done
+  ) >>/var/log/aegis-audio.log 2>&1 &
+fi
+
 # Software rendering must be allowed — simpledrm has no GPU accel. And force
 # the pixman renderer outright: VM GPUs (vmwgfx et al) fail EGL device
 # creation ("eglQueryDevicesEXT: Failed to allocate device"), and pixman

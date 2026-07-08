@@ -1,11 +1,24 @@
-// Audio amplitude source for the sphere. Tries the microphone first (the JARVIS
-// fantasy needs the room's sound, not a media element's); if permission is denied
-// or no device exists, falls back to a synthetic breathing pulse so the sphere is
-// never a dead rock — an idle HUD that visibly "breathes" reads as alive, which
-// is the entire point of the design.
+// Audio amplitude source for the sphere. Captures the default audio source —
+// which on the installed OS is the system output's monitor, so the sphere
+// pulses to the game/music, not a room mic. If capture is denied or there's no
+// device, it falls back to a synthetic breathing pulse so the sphere is never a
+// dead rock — an idle HUD that visibly "breathes" reads as alive, which is the
+// entire point of the design.
 export async function createAudioSource() {
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // On the installed OS the default capture source is routed to the audio
+    // output's monitor (see aegis-session), so this hears the game/system —
+    // not a room mic. Disable the voice-call DSP (echo cancel / AGC / noise
+    // suppression) that Chromium applies by default; on a monitor feed it just
+    // pumps and attenuates the signal we want to visualize. In a browser with
+    // a real mic these simply keep the raw level.
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: false,
+        autoGainControl: false,
+        noiseSuppression: false,
+      },
+    });
     const ctx = new AudioContext();
     const source = ctx.createMediaStreamSource(stream);
     const analyser = ctx.createAnalyser();

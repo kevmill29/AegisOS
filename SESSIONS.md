@@ -1,6 +1,44 @@
 # Aegis — Session Handoff
 
-Last updated: 2026-07-07 (evening — PHASE 3 INTEGRATED & VM-VERIFIED, paused for token refresh)
+Last updated: 2026-07-07 (late — UEFI-boot fix + brain-wiring + PipeWire)
+
+## MILESTONE: ISO now boots the installer under native UEFI (the real-hardware blocker)
+
+The user flashed the ISO (Etcher, not Ventoy) and it froze right after `Run
+/init` on real UEFI hardware — kernel log visible, then nothing — while it
+booted fully in VirtualBox. Root cause: our custom kernel had been stripped of
+**every EFI framebuffer console driver** (`FB_EFI`, `SYSFB_SIMPLEFB`,
+`DRM_SIMPLEDRM`, `DRM_FBDEV_EMULATION`, `FRAMEBUFFER_CONSOLE` all off) and kept
+only `VGA_CONSOLE` — which exists only in BIOS text mode. So VirtualBox (BIOS)
+had a console but native UEFI had none: the installer ran blind and blocked on
+its first `gum` menu forever (looked like a hang, wasn't). Arch installs fine
+on the same box because its kernel ships those drivers.
+
+Fix (this session):
+- Rebuilt Linux 6.12 with `CONFIG_SYSFB_SIMPLEFB`, `DRM_SIMPLEDRM`,
+  `DRM_FBDEV_EMULATION`, `FB`, `FRAMEBUFFER_CONSOLE` all `=y` (bzImage #3,
+  22:44). simpledrm owns the EFI GOP framebuffer → real interactive `tty0`
+  under UEFI, and it also hands the installed kiosk a `/dev/dri/card0`.
+- Removed `nomodeset` from the installer/live GRUB entries — it would have
+  *disabled* simpledrm and re-broken the console. (`iso/grub.cfg`.)
+- **Verified under UEFI/OVMF in QEMU**: the magenta "AEGIS OS NetInstaller"
+  gum menu renders and eth0 gets a DHCP lease (screenshot delivered to user).
+  This is the exact screen that was blank before.
+- Also (next-step from the plan): started PipeWire + wireplumber +
+  pipewire-pulse in `aegis-session` (non-fatal) so the installed OS has a real
+  audio sink; sphere-reactivity-to-system-audio (monitor source routing) still
+  TODO. Rebuilt ISO 23:23 carries all of the above.
+
+Built per README first (frontend `npm run build`, compositor `cargo build
+--release`, agent musl) — note the literal whole-workspace `cargo build
+--target musl` fails on `llm-orchestrator` (needs an `x86_64-linux-musl-gcc`
+cross-compiler for its TLS stack); irrelevant to the ISO, whose agent is
+`-p agent-daemon` (pure Rust). Kernel is a README prerequisite, not built by it.
+
+Uncommitted on disk: kernel `.config` (WSL side), `iso/grub.cfg`,
+`iso/aegis-session`, the brain-wiring Rust (`self_throttle.rs`, `monitor.rs`,
+`agent-daemon/src/main.rs`), and this file. Nothing committed/pushed yet this
+session.
 
 ## MILESTONE: Installed OS boots into the working kiosk (cyan sphere, "aegis online")
 
@@ -32,23 +70,44 @@ scripts drive install→boot→screenshot without a human).
   lab-verified AND running on the user's VM.
 
 **Broken / incomplete right now:** nothing known-broken. Incomplete (by
-design, not regressions): pipewire installed but never started (sphere uses
-synthetic audio); Steam client installed but unlaunchable (no xorg-xwayland
-in the kiosk); LLM tier compiled out of the ISO agent; brain's cpu.weight
-recommendation still advisory (logged, not written); Smithay compositor still
+design, not regressions): PipeWire starts in `aegis-session` (game audio sink
+works) and the default capture source is best-effort routed to the sink's
+`.monitor` so the sphere reacts to system audio (frontend `audio.js` now
+captures with the voice-DSP off) — unverified on real audio hardware, but
+non-fatal if it doesn't take; Steam client installed but unlaunchable (no
+xorg-xwayland
+in the kiosk); LLM tier compiled out of the ISO agent (so on-target the brain
+never runs and the background weight stays at the safe default 10 — the
+brain→cgroup wiring itself is done and lab-verified, it just needs the llm
+feature enabled on the image to take effect); Smithay compositor still
 winit-only (cage stands in); updater syncs files but not packages nor the
 installed grub.cfg; WSL note — `wsl.exe` strips quotes/joins args, so run
 multi-command work via script files in /root/, never inline `bash -c` with
 $vars or inner quotes.
 
-**Exact next step on resume:** wire the throttle brain's recommended
-`cpu.weight` into the live cgroup (agent-daemon currently logs it as
-advisory — see "connect-the-dots" note below). Small pure-Rust change +
-rebuild musl agent + lab-verify with `fake-game`. Queued after it, in order:
-start pipewire/wireplumber in `aegis-session`; add `xorg-xwayland` + a
-supervised Steam launch (needs reinstall, not update); then the remaining
-list from the session conversation (LLM tier on target, voice/STT, Smithay
-DRM backend, real-hardware validation).
+**DONE (this session):** the throttle brain now writes its recommended
+`cpu.weight` to the LIVE background cgroup — no longer advisory.
+`SelfThrottle::apply_background_weight()` (cgroup-ctl) writes the clamped
+weight to the background leaf; `engage()` resets to the safe default (10)
+first so a new game never inherits a stale weight; the daemon refines it
+*after* the immediate throttle so a slow/absent model can't delay
+deprioritization. `ProcessMonitor` now exposes real total/available memory so
+the brain decides on live telemetry, not zeros. Lab-verified as root against a
+fake Proton reaper: cycling 4 launches, llama3.2:1b returned 70/75/55/50 and
+the live `background/cpu.weight` file read back exactly those values each time
+(default 10 with no game); PID moved normal↔background and restored on exit.
+26 workspace tests pass; both the `--features llm` build and the default
+musl/ISO release still compile (ISO agent stays lean — llm feature is off
+there, so on-target the weight stays at the safe default 10).
+
+**Exact next step on resume:** real-hardware validation — the user reflashes
+the 23:35 ISO (UEFI fix + PipeWire + sphere audio routing) and confirms it
+installs and boots the kiosk on their AMD rig. Pending that, in order: add
+`xorg-xwayland` + a supervised Steam launch (needs a reinstall, not an update)
+— the actual point of a gaming OS; LLM tier on the target image; voice/STT;
+Smithay DRM backend. Also still open: commit + push this session's uncommitted
+work (kernel config, grub.cfg, aegis-session, aegis-install, frontend
+audio.js, brain-wiring Rust, SESSIONS.md).
 
 ---
 
