@@ -77,6 +77,12 @@ export default function App() {
     });
     const offLink = window.aegis?.onLink(({ connected }) => setLinked(connected));
 
+    // Multi-monitor: put the sphere on the primary screen; its light clouds the
+    // rest. focusX is the primary display's center across the extended desktop.
+    const offLayout = window.aegis?.onLayout(({ focusX }) => {
+      if (typeof focusX === 'number') sphere?.setFocus(focusX);
+    });
+
     // Terminal toggle: Electron's global Ctrl+Alt+T lands here, and the same
     // chord is caught locally as a fallback when another app owns the global
     // hook. Voice-open will fire this same toggle once local STT lands.
@@ -95,6 +101,7 @@ export default function App() {
       clearInterval(audioTimer);
       offEvent?.();
       offLink?.();
+      offLayout?.();
       offToggle?.();
       window.removeEventListener('keydown', onKeyDown);
       sphere?.dispose();

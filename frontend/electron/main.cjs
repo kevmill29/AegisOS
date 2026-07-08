@@ -1,7 +1,7 @@
 // Electron main process: owns the window and the TCP link to the core agent.
 // The renderer never touches the network — events arrive via the preload bridge,
 // which keeps contextIsolation on and nodeIntegration off.
-const { app, BrowserWindow, globalShortcut, ipcMain, session } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, session, screen } = require('electron');
 const { spawn } = require('node:child_process');
 const net = require('node:net');
 const path = require('node:path');
@@ -40,6 +40,7 @@ function createWindow() {
   win.webContents.on('did-finish-load', () => {
     sendToRenderer('aegis:link', lastLink);
     if (lastHello) sendToRenderer('aegis:event', lastHello);
+    sendLayout();
   });
   win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
 }
@@ -48,6 +49,29 @@ function sendToRenderer(channel, payload) {
   if (win && !win.isDestroyed()) {
     win.webContents.send(channel, payload);
   }
+}
+
+// Tell the renderer where the primary display sits within the whole (possibly
+// multi-monitor, extended) desktop, so the sphere can render on one screen and
+// spill its light across the rest instead of splitting on the seam.
+let lastLayout = { focusX: 0.5, multi: false };
+function computeLayout() {
+  const displays = screen.getAllDisplays();
+  const primary = screen.getPrimaryDisplay();
+  let minX = Infinity, maxX = -Infinity;
+  for (const d of displays) {
+    minX = Math.min(minX, d.bounds.x);
+    maxX = Math.max(maxX, d.bounds.x + d.bounds.width);
+  }
+  const totalW = maxX - minX;
+  const focusX = totalW > 0
+    ? (primary.bounds.x - minX + primary.bounds.width / 2) / totalW
+    : 0.5;
+  return { focusX, multi: displays.length > 1, count: displays.length };
+}
+function sendLayout() {
+  lastLayout = computeLayout();
+  sendToRenderer('aegis:layout', lastLayout);
 }
 
 // Line-buffered NDJSON client with dumb-but-sufficient reconnect: the daemon may
@@ -137,6 +161,7 @@ ipcMain.on('terminal:kill', (_event, { execId }) => {
 ipcMain.on('aegis:ui-ready', (event) => {
   event.sender.send('aegis:link', lastLink);
   if (lastHello) event.sender.send('aegis:event', lastHello);
+  event.sender.send('aegis:layout', lastLayout);
 });
 
 app.whenReady().then(() => {
@@ -154,6 +179,11 @@ app.whenReady().then(() => {
 
   createWindow();
   connectToAgent();
+
+  // Re-push the layout if monitors are plugged/unplugged or rearranged.
+  screen.on('display-added', sendLayout);
+  screen.on('display-removed', sendLayout);
+  screen.on('display-metrics-changed', sendLayout);
 
   // Headless verification of the terminal's exec path: runs the same
   // bashInvocation the UI uses and echoes the result to stdout, where a test

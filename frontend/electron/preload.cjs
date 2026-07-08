@@ -14,6 +14,13 @@ contextBridge.exposeInMainWorld('aegis', {
     ipcRenderer.on('aegis:link', handler);
     return () => ipcRenderer.removeListener('aegis:link', handler);
   },
+  // Multi-monitor layout: where the primary display sits in the extended
+  // desktop, so the sphere can render on one screen and cloud the rest.
+  onLayout(callback) {
+    const handler = (_evt, payload) => callback(payload);
+    ipcRenderer.on('aegis:layout', handler);
+    return () => ipcRenderer.removeListener('aegis:layout', handler);
+  },
   // Terminal: intentionally command-granular rather than a raw PTY handle, so
   // the renderer can only run what the user typed into the terminal UI.
   onToggleTerminal(callback) {

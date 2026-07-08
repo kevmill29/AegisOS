@@ -119,6 +119,59 @@ void main() {
 }
 `;
 
+// Full-canvas ambient background: a faint, slow "wispy cloud" of the sphere's
+// own light. It peaks around the sphere and falls off with distance, so on a
+// single screen it reads as a gentle atmosphere and on an EXTENDED multi-monitor
+// desktop the sphere sits on the primary screen while its light spills across
+// the others as drifting cloud — instead of the sphere splitting on the seam.
+const BG_VERTEX = /* glsl */ `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}
+`;
+
+const BG_FRAGMENT = /* glsl */ `
+${NOISE_GLSL}
+uniform float uTime;
+uniform float uAudio;
+uniform float uSleep;
+uniform float uLink;
+uniform float uAspect;   // canvas width/height, so distance is round not oval
+uniform vec2  uFocus;    // where the sphere sits on the canvas, in UV (0..1)
+varying vec2 vUv;
+
+float fbm(vec3 p) {
+  float f = 0.0, a = 0.5;
+  for (int i = 0; i < 3; i++) { f += a * snoise(p); p *= 2.02; a *= 0.5; }
+  return f;
+}
+
+void main() {
+  vec3 awake = vec3(0.20, 0.85, 1.00);
+  vec3 asleep = vec3(0.10, 0.16, 0.38);
+  vec3 warning = vec3(1.00, 0.55, 0.15);
+  vec3 base = mix(warning, mix(awake, asleep, uSleep), uLink);
+
+  // Aspect-correct distance from the sphere's screen position.
+  vec2 d = vUv - uFocus;
+  d.x *= uAspect;
+  float dist = length(d);
+
+  // Slow, domain-warped cloud.
+  vec3 q = vec3(vUv * 2.4, uTime * 0.025);
+  float cloud = fbm(q + 0.6 * fbm(q * 0.5)) * 0.5 + 0.5;
+
+  // Bright near the sphere, fading outward — this is what spills onto screen 2.
+  float halo = exp(-dist * 1.7);
+  float energy = mix(0.45, 0.16, uSleep) + uAudio * 0.5;
+  float intensity = halo * (0.30 + 0.70 * cloud) * energy;
+
+  gl_FragColor = vec4(base * intensity * 0.6, 1.0);
+}
+`;
+
 function lerp(a, b, t) {
   return a + (b - a) * t;
 }
@@ -127,10 +180,19 @@ export class AegisSphere {
   constructor(canvas) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // We draw the ambient cloud then the sphere over it, so clear by hand.
+    this.renderer.autoClear = false;
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
     this.camera.position.z = 4.2;
+
+    // Where the sphere should sit on the canvas, 0..1 (0.5 = centered). On an
+    // extended desktop this is the primary display's center, so the sphere lands
+    // on one screen and the cloud fills the rest.
+    this.focusX = 0.5;
+    this.uAspect = { value: 1 };
+    this.uFocus = { value: new THREE.Vector2(0.5, 0.5) };
 
     this.uniforms = {
       uTime: { value: 0 },
@@ -138,6 +200,30 @@ export class AegisSphere {
       uSleep: { value: 0 },
       uLink: { value: 0 },
     };
+
+    // Ambient cloud: a fullscreen quad drawn with an orthographic camera before
+    // the sphere. Shares the animated uniforms so it eases with the sphere state.
+    this.bgScene = new THREE.Scene();
+    this.bgCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    this.bgScene.add(
+      new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2),
+        new THREE.ShaderMaterial({
+          vertexShader: BG_VERTEX,
+          fragmentShader: BG_FRAGMENT,
+          uniforms: {
+            uTime: this.uniforms.uTime,
+            uAudio: this.uniforms.uAudio,
+            uSleep: this.uniforms.uSleep,
+            uLink: this.uniforms.uLink,
+            uAspect: this.uAspect,
+            uFocus: this.uFocus,
+          },
+          depthTest: false,
+          depthWrite: false,
+        })
+      )
+    );
 
     const core = new THREE.Mesh(
       new THREE.IcosahedronGeometry(1, 48),
@@ -201,7 +287,27 @@ export class AegisSphere {
     this.group.scale.setScalar(sleepScale);
     this.group.rotation.y += dt * lerp(0.15, 0.03, u.uSleep.value);
 
+    this.renderer.clear();
+    this.renderer.render(this.bgScene, this.bgCamera);
     this.renderer.render(this.scene, this.camera);
+  }
+
+  // focusX in 0..1 is where the sphere should sit horizontally on the canvas.
+  // Windows-style extend: the sphere goes on the primary screen and its light
+  // clouds the rest. Called with the primary display's center from Electron.
+  setFocus(focusX) {
+    this.focusX = Math.min(1, Math.max(0, focusX));
+    this.applyFocus();
+  }
+
+  applyFocus() {
+    const aspect = this.camera.aspect || 1;
+    this.uFocus.value.set(this.focusX, 0.5);
+    // Move the sphere in world X so it projects to focusX. Half the visible
+    // width at the sphere's depth is tan(fov/2) * distance * aspect.
+    const halfW = Math.tan((this.camera.fov * Math.PI) / 360) * this.camera.position.z * aspect;
+    const ndcX = this.focusX * 2 - 1;
+    this.group.position.x = ndcX * halfW;
   }
 
   resize() {
@@ -209,6 +315,8 @@ export class AegisSphere {
     this.renderer.setSize(clientWidth, clientHeight, false);
     this.camera.aspect = clientWidth / clientHeight;
     this.camera.updateProjectionMatrix();
+    this.uAspect.value = this.camera.aspect;
+    this.applyFocus();
   }
 
   dispose() {
