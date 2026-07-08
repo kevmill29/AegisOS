@@ -1,0 +1,30 @@
+# Aegis kernel config fragment — options this OS depends on beyond what a stock
+# build might leave off. The kernel is a build-time prerequisite (see the
+# README); apply this fragment against the Linux 6.12 tree before building:
+#
+#   cd <linux-6.12>
+#   scripts/config --enable CONFIG_SYSFB_SIMPLEFB \
+#                  --enable CONFIG_DRM --enable CONFIG_DRM_SIMPLEDRM \
+#                  --enable CONFIG_DRM_FBDEV_EMULATION \
+#                  --enable CONFIG_FB --enable CONFIG_FRAMEBUFFER_CONSOLE
+#   make olddefconfig && make -j"$(nproc)" bzImage
+#
+# --- UEFI framebuffer console (2026-07-07) ------------------------------------
+# Without these the kernel has only CONFIG_VGA_CONSOLE, which exists purely in
+# BIOS text mode. That means the installer/TUI renders under BIOS and in VMs
+# (VirtualBox default) but is COMPLETELY BLIND under native UEFI — the console
+# never comes up, so the gum installer runs invisibly and blocks forever on its
+# first prompt (looks like a hang). simpledrm takes the EFI GOP framebuffer via
+# sysfb, fbdev-emulation exposes /dev/fb0, and the framebuffer console renders a
+# real, interactive tty0 under UEFI. Bonus: simpledrm also gives the installed
+# kiosk a /dev/dri/card0 for the cage/Wayland compositor to render into.
+#
+# NOTE: do NOT pass `nomodeset` on the kernel command line for the installer or
+# live entries — it disables simpledrm (a KMS driver) and re-breaks the console.
+# See iso/grub.cfg.
+CONFIG_SYSFB_SIMPLEFB=y
+CONFIG_DRM=y
+CONFIG_DRM_SIMPLEDRM=y
+CONFIG_DRM_FBDEV_EMULATION=y
+CONFIG_FB=y
+CONFIG_FRAMEBUFFER_CONSOLE=y
