@@ -1,0 +1,24 @@
+# Aegis OS package overlay — appended to releng's packages.x86_64 by build.sh.
+# Kept to packages guaranteed to resolve in the Arch repos so the ISO build is
+# reproducible. The heavier gaming userland (steam, electron, lib32-* Vulkan,
+# proprietary nvidia) and the sphere kiosk are layered in the next phase once
+# this trusted base is confirmed to build and boot.
+
+# --- audio (system + game output capture for the sphere) ---
+pipewire
+pipewire-pulse
+pipewire-alsa
+wireplumber
+libpulse
+
+# --- graphics: software + open-source vendor Vulkan (VM-safe, no proprietary) ---
+mesa
+vulkan-icd-loader
+vulkan-swrast
+vulkan-radeon
+vulkan-intel
+
+# --- Wayland kiosk infrastructure (session launch for the sphere frontend) ---
+cage
+seatd
+greetd

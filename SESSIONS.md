@@ -1,6 +1,45 @@
 # Aegis — Session Handoff
 
-Last updated: 2026-07-07 (late — UEFI-boot fix + brain-wiring + PipeWire)
+Last updated: 2026-07-08 (installer pivot → archiso + archinstall; base ISO built + UEFI-verified)
+
+## MILESTONE: Installer pivoted off the hand-rolled stack onto archiso + archinstall
+
+Decision (user's call): stop hand-rolling the parts that are hardest to get
+right — the custom stripped kernel, the busybox initramfs, and the bespoke
+`gum`/`pacstrap` net-installer — since *every* install problem we hit (the UEFI
+blind console, the boot-medium hang risks) came from that homemade plumbing.
+Rebuild the ISO on Arch's **official `releng` archiso profile** so we inherit
+the **stock Arch kernel** (all console/GPU/USB/net drivers built in) and a real
+systemd live env, with **archinstall** for disk installs. Aegis rides on top as
+an overlay, not a bespoke OS.
+
+New pipeline (`core-agent/archiso/`, replaces `core-agent/iso/`):
+- `build.sh` — clones `releng`, enables `[multilib]`, appends `packages.aegis`,
+  overlays `airootfs/`, stages the musl `aegis-agent` binary + `fake-game`,
+  enables `aegis-agent.service`, then runs `mkarchiso` inside the WSL Arch
+  build chroot. Output: `dist/aegis-arch.iso`.
+- `packages.aegis` — audio (pipewire/wireplumber/libpulse), graphics
+  (mesa + swrast/radeon/intel Vulkan), kiosk infra (cage/seatd/greetd). Steam,
+  electron, lib32 Vulkan, and the sphere kiosk are the next layer.
+- `airootfs/etc/systemd/system/aegis-agent.service` (Delegate=yes for the
+  cgroup self-throttle) + branded `airootfs/etc/motd`.
+
+**Built + tested this session (thorough):**
+- `mkarchiso` runs in WSL (loop/squashfs/overlay all present) → 1.6 GB
+  `dist/aegis-arch.iso`, exit 0.
+- **Boots under native UEFI (OVMF/QEMU)**: systemd-boot menu renders, then the
+  full framebuffer console — the blind-black-screen that hung the old installer
+  is *gone at the source* (stock kernel). Autologin root shell + the AEGIS OS
+  motd render. Screenshots captured.
+- Shipped squashfs verified to contain: `vmlinuz-linux` (stock kernel),
+  `/usr/local/bin/aegis-agent` + its **enabled** service symlink, `archinstall`,
+  cage/greetd/seatd/pipewire/wireplumber, and our motd.
+
+Next on this track: layer the sphere kiosk (greetd → cage → electron frontend)
+and an `aegis-installer` wrapper that runs archinstall with an Aegis config +
+post-install overlay (agent + kiosk enablement), ideally as a pacman package in
+a local repo baked into the ISO. The old `core-agent/iso/` tree is retained for
+reference but deprecated.
 
 ## MILESTONE: ISO now boots the installer under native UEFI (the real-hardware blocker)
 

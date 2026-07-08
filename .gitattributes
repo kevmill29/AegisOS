@@ -3,4 +3,5 @@
 # Force LF so a Windows checkout (core.autocrlf) can never reintroduce them.
 *.sh text eol=lf
 core-agent/iso/** text eol=lf
+core-agent/archiso/** text eol=lf
 compositor/launch-kiosk.sh text eol=lf

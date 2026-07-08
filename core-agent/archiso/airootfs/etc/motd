@@ -1,0 +1,14 @@
+
+   █████╗ ███████╗ ██████╗ ██╗███████╗    ██████╗ ███████╗
+  ██╔══██╗██╔════╝██╔════╝ ██║██╔════╝   ██╔═══██╗██╔════╝
+  ███████║█████╗  ██║  ███╗██║███████╗   ██║   ██║███████╗
+  ██╔══██║██╔══╝  ██║   ██║██║╚════██║   ██║   ██║╚════██║
+  ██║  ██║███████╗╚██████╔╝██║███████║   ╚██████╔╝███████║
+  ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚═╝╚══════╝    ╚═════╝ ╚══════╝
+
+  Aegis OS — live environment (Arch-based, stock kernel).
+
+  Agent status .......  systemctl status aegis-agent
+  Install to disk ....  archinstall        (Arch's guided installer)
+  Network ............  already up via systemd-networkd / iwctl for Wi-Fi
+

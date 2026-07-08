@@ -1,0 +1,19 @@
+[Unit]
+Description=Aegis Core Agent (process monitor + cgroup self-throttle)
+Documentation=https://github.com/kevmill29/AegisOS
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/aegis-agent
+Restart=on-failure
+RestartSec=2
+Environment=RUST_LOG=info
+# Hand the agent a delegated cgroup-v2 subtree so its self-throttle (moving its
+# own PID between the normal/background leaves and setting cpu.weight) works
+# without the agent ever touching any other process's cgroup. If delegation is
+# unavailable it degrades to monitor-only rather than failing — see SelfThrottle.
+Delegate=yes
+
+[Install]
+WantedBy=multi-user.target
