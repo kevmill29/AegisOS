@@ -131,6 +131,14 @@ ipcMain.on('terminal:kill', (_event, { execId }) => {
   running.get(execId)?.kill();
 });
 
+// Renderer signals its listeners are attached — replay current state. The
+// did-finish-load replay alone is not enough: React effects run after first
+// paint, which on software-rendered targets lands after the load event.
+ipcMain.on('aegis:ui-ready', (event) => {
+  event.sender.send('aegis:link', lastLink);
+  if (lastHello) event.sender.send('aegis:event', lastHello);
+});
+
 app.whenReady().then(() => {
   createWindow();
   connectToAgent();

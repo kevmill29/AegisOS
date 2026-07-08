@@ -88,6 +88,9 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
 
+    // Listeners are attached — ask main to replay the current agent state.
+    window.aegis?.ready?.();
+
     return () => {
       clearInterval(audioTimer);
       offEvent?.();

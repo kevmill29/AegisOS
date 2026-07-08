@@ -32,4 +32,11 @@ contextBridge.exposeInMainWorld('aegis', {
     ipcRenderer.on('terminal:data', handler);
     return () => ipcRenderer.removeListener('terminal:data', handler);
   },
+  // Called once the renderer has attached its listeners: main replays the
+  // current link state + last Hello. Push-only delivery loses the startup
+  // events on slow targets, where the socket connects before the first
+  // paint (and React's effects) have happened.
+  ready() {
+    ipcRenderer.send('aegis:ui-ready');
+  },
 });
