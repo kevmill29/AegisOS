@@ -33,6 +33,20 @@ cat <<'BANNER'
 BANNER
 read -rp "  Press Enter to launch the base installer (Ctrl-C to abort)... " _
 
+# --- Step 0: connectivity + a fast mirror ------------------------------------
+# archinstall's first move is a pacman DB sync ("Fetching Arch Linux package
+# database..."), which HANGS for many minutes if the archiso mirrorlist is
+# unranked or a mirror stalls. Fail fast if there's no internet, and pin Arch's
+# official geo load-balancer so the sync is quick and never stalls on a dead
+# mirror.
+say "Checking connectivity + setting a fast mirror"
+if ! timeout 15 bash -c 'exec 3<>/dev/tcp/geo.mirror.pkgbuild.com/443' 2>/dev/null; then
+  warn "Can't reach the Arch mirrors — no internet connection detected."
+  warn "Wired is automatic; for Wi-Fi run 'iwctl', then re-run: sudo aegis-installer"
+  exit 1
+fi
+echo 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch' > /etc/pacman.d/mirrorlist
+
 # --- Step 1: base Arch via the trusted guided installer ----------------------
 say "Launching archinstall (base system)"
 archinstall || { warn "archinstall exited non-zero; not applying the Aegis overlay."; exit 1; }
