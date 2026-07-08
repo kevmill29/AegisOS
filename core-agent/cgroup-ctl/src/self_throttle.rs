@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::error::CgroupError;
 use crate::handle::{own_cgroup_dir, require_cgroup_v2_mounted, CgroupHandle};
@@ -72,8 +72,17 @@ impl SelfThrottle {
     /// enabled) refines this afterward via [`Self::apply_background_weight`].
     pub fn engage(&self) -> Result<(), CgroupError> {
         info!(weight = BACKGROUND_CPU_WEIGHT, "self-throttling: game session detected");
-        self.background.set_cpu_weight(BACKGROUND_CPU_WEIGHT)?;
-        self.background.add_current_process()
+        // Deprioritize FIRST — moving our PID into the background leaf is the
+        // actual throttle and is what must not fail silently. Then reset the
+        // weight to the safe default (best-effort): a stray cpu.weight write
+        // error must never mask a throttle that otherwise succeeded, so it's
+        // logged, not propagated. (add_current_process already fails closed via
+        // the ProtectedSet check inside the handle.)
+        let moved = self.background.add_current_process();
+        if let Err(e) = self.background.set_cpu_weight(BACKGROUND_CPU_WEIGHT) {
+            warn!(error = %e, "could not reset background cpu.weight on engage (throttle move still applied)");
+        }
+        moved
     }
 
     /// Refine the background cgroup's `cpu.weight` to a policy-chosen value while a
