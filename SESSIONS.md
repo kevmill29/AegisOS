@@ -1,6 +1,58 @@
 # Aegis — Session Handoff
 
-Last updated: 2026-07-07 (ALL PHASES COMPLETE)
+Last updated: 2026-07-07 (evening — PHASE 3 INTEGRATED & VM-VERIFIED, paused for token refresh)
+
+## MILESTONE: Installed OS boots into the working kiosk (cyan sphere, "aegis online")
+
+Verified twice over: on the user's VirtualBox VM and in an automated QEMU/KVM
+lab inside WSL (`/root/aegis/lab/` — lab-mkdisk/lab-boot/lab-screen/lab-cmd
+scripts drive install→boot→screenshot without a human).
+
+**Finished this session:**
+- Built everything (frontend, compositor, musl agent) in WSL; compiled Linux
+  6.12 from source (`/root/aegis/linux-6.12`, WSL) with vfat/iso9660/squashfs/
+  overlayfs + DRM (simpledrm, vmwgfx, virtio-gpu, bochs) + FB_SIMPLE.
+- Fixed installer/boot scripts end to end: CRLF everywhere (git `autocrlf`
+  was reintroducing it — `.gitattributes` now forces LF), agent missing from
+  the ISO payload, `root=LABEL=AEGIS` instead of raw /dev/sdX, `fail()`
+  undefined in init, pacstrap cache OOM, single-mirror pacstrap failures,
+  switch_root racing the agent launch.
+- Phase 3 integration: new `aegis-init` (installed-system PID 1: mounts, agent
+  cgroup, session supervisor w/ crashloop→console fallback), `aegis-session`
+  (udevd → seatd → cage → Electron, pixman renderer, SwiftShader WebGL),
+  `aegis-update` (zero-typing "Update Aegis OS" GRUB entry on the ISO),
+  `aegis.ui=debug` boot mode that dumps the session log to the console.
+- Frontend bugs found via lab (all fixed, committed): `vec3 active` — GLSL ES
+  reserved word, desktop drivers tolerate it, ANGLE rejects → no sphere;
+  uncaught AegisSphere constructor error unmounted the whole React tree →
+  the original black screen; agent link/Hello events raced page load →
+  "link lost" forever — replaced with an `aegis:ui-ready` pull handshake.
+- All work committed on `main` (through `2c3950d` + this file). ISO:
+  `dist/aegis-0.1.iso` (2026-07-07 20:12 build) — this exact build is
+  lab-verified AND running on the user's VM.
+
+**Broken / incomplete right now:** nothing known-broken. Incomplete (by
+design, not regressions): pipewire installed but never started (sphere uses
+synthetic audio); Steam client installed but unlaunchable (no xorg-xwayland
+in the kiosk); LLM tier compiled out of the ISO agent; brain's cpu.weight
+recommendation still advisory (logged, not written); Smithay compositor still
+winit-only (cage stands in); updater syncs files but not packages nor the
+installed grub.cfg; WSL note — `wsl.exe` strips quotes/joins args, so run
+multi-command work via script files in /root/, never inline `bash -c` with
+$vars or inner quotes.
+
+**Exact next step on resume:** wire the throttle brain's recommended
+`cpu.weight` into the live cgroup (agent-daemon currently logs it as
+advisory — see "connect-the-dots" note below). Small pure-Rust change +
+rebuild musl agent + lab-verify with `fake-game`. Queued after it, in order:
+start pipewire/wireplumber in `aegis-session`; add `xorg-xwayland` + a
+supervised Steam launch (needs reinstall, not update); then the remaining
+list from the session conversation (LLM tier on target, voice/STT, Smithay
+DRM backend, real-hardware validation).
+
+---
+
+# Previous milestone (2026-07-07, all charter phases implemented)
 
 ## MILESTONE: All charter phases implemented and live-verified
 
