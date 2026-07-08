@@ -65,9 +65,28 @@ impl SelfThrottle {
     }
 
     /// Called on game-launch detection: deprioritize the agent itself.
+    ///
+    /// This sets the background weight back to the safe default first, so a game
+    /// launching right after another one doesn't inherit a stale, possibly more
+    /// aggressive weight from a previous session's brain decision. The brain (if
+    /// enabled) refines this afterward via [`Self::apply_background_weight`].
     pub fn engage(&self) -> Result<(), CgroupError> {
         info!(weight = BACKGROUND_CPU_WEIGHT, "self-throttling: game session detected");
+        self.background.set_cpu_weight(BACKGROUND_CPU_WEIGHT)?;
         self.background.add_current_process()
+    }
+
+    /// Refine the background cgroup's `cpu.weight` to a policy-chosen value while a
+    /// game is active. Kept separate from [`Self::engage`] on purpose: `engage`
+    /// throttles *immediately* with a known-safe default the moment a game is seen,
+    /// and this only adjusts the number afterward — so a slow or unavailable
+    /// throttle brain can never delay or block the actual deprioritization.
+    ///
+    /// Only touches this process's own delegated background leaf; it cannot name or
+    /// affect any other cgroup, which is why the brain is allowed to drive it.
+    pub fn apply_background_weight(&self, weight: u32) -> Result<(), CgroupError> {
+        info!(weight, "applying throttle-brain cpu.weight to background cgroup");
+        self.background.set_cpu_weight(weight)
     }
 
     /// Called on game-exit detection: restore normal priority.

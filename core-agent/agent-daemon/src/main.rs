@@ -89,19 +89,20 @@ async fn main() -> anyhow::Result<()> {
                 monitor.refresh();
                 let started = handle_tick(&monitor, &mut state, throttle.as_ref(), &bus);
                 // On a fresh game launch, consult the throttle brain (llm feature
-                // only) and log the recommended weight. It's advisory in this
-                // milestone — SelfThrottle already applied its default weight
-                // above; wiring the brain's number into cpu.weight is the next
-                // step, kept separate so a slow/wrong model can never delay or
-                // block the actual throttle that already happened.
+                // only) and apply its recommended weight to the live background
+                // cgroup. SelfThrottle::engage already throttled with a safe
+                // default the instant the game was seen; this only *refines* that
+                // number afterward, so a slow or unavailable model can never delay
+                // or block the deprioritization that already happened.
                 #[cfg(feature = "llm")]
                 if let Some(session) = started {
+                    monitor.refresh_memory();
                     let ctx = llm_orchestrator::TelemetryContext {
                         game_name: session.game_name.clone(),
                         app_id: session.app_id.clone(),
                         process_count: monitor.snapshot().len(),
-                        total_memory_mb: 0,
-                        available_memory_mb: 0,
+                        total_memory_mb: monitor.total_memory_mb(),
+                        available_memory_mb: monitor.available_memory_mb(),
                     };
                     let policy = brain.decide(&ctx);
                     info!(
@@ -110,6 +111,15 @@ async fn main() -> anyhow::Result<()> {
                         rationale = %policy.rationale,
                         "throttle brain recommendation"
                     );
+                    if let Some(t) = throttle.as_ref() {
+                        match t.apply_background_weight(policy.cpu_weight) {
+                            Ok(()) => info!(
+                                cpu_weight = policy.cpu_weight,
+                                "applied throttle-brain cpu.weight to live cgroup"
+                            ),
+                            Err(e) => warn!(error = %e, "failed to apply brain cpu.weight"),
+                        }
+                    }
                 }
                 #[cfg(not(feature = "llm"))]
                 let _ = started;

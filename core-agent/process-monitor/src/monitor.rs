@@ -35,6 +35,22 @@ impl ProcessMonitor {
         );
     }
 
+    /// Refresh system memory totals. Separate from [`Self::refresh`] because the
+    /// per-tick detection path doesn't need memory — only the throttle brain does,
+    /// and only at the moment a game launches, so we don't pay for it every poll.
+    pub fn refresh_memory(&mut self) {
+        self.system.refresh_memory();
+    }
+
+    /// Total / available system memory in MB, for throttle-brain telemetry. Call
+    /// [`Self::refresh_memory`] first, or these read whatever the last refresh saw.
+    pub fn total_memory_mb(&self) -> u64 {
+        self.system.total_memory() / 1024 / 1024
+    }
+    pub fn available_memory_mb(&self) -> u64 {
+        self.system.available_memory() / 1024 / 1024
+    }
+
     pub fn snapshot(&self) -> Vec<ProcessInfo> {
         self.system
             .processes()
