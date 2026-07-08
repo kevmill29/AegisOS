@@ -1,0 +1,17 @@
+# greetd drives the Aegis kiosk. `initial_session` autologins the unprivileged
+# `aegis` user at boot (no greeter shown) straight into cage running the sphere.
+#   cage -m last : use only ONE output, so the sphere never splits across a
+#                  multi-monitor setup (default `-m extend` spans all outputs).
+#   cage -s      : allow VT switching, so Ctrl-Alt-F2 still reaches a console.
+# If the session ever exits, `default_session` falls back to a text login.
+
+[terminal]
+vt = 1
+
+[default_session]
+command = "agreety --cmd /bin/bash"
+user = "greeter"
+
+[initial_session]
+command = "cage -m last -s -- /usr/bin/aegis-session"
+user = "aegis"

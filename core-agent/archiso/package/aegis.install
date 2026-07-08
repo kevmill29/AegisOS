@@ -1,9 +1,31 @@
 # Runs inside the target root at install time (both the live ISO build and the
-# on-disk install via aegis-installer). `systemctl enable` in a chroot just
-# creates the .wants symlinks offline — no running systemd required.
+# on-disk install via aegis-installer). `systemctl` in a chroot just manipulates
+# symlinks offline — no running systemd required.
 post_install() {
-  systemctl enable seatd.service aegis-agent.service aegis-kiosk.service >/dev/null 2>&1
-  echo ":: Aegis enabled — seatd, the core agent, and the sphere kiosk will start on boot."
+  # Core agent (system service, root — needs the cgroup delegation).
+  systemctl enable aegis-agent.service >/dev/null 2>&1
+
+  # Install our greetd config (owned path -> /etc/greetd/config.toml, which the
+  # greetd package owns, so we can't ship it directly without a file conflict).
+  install -Dm644 /usr/share/aegis/greetd-config.toml /etc/greetd/config.toml
+
+  # greetd is the display manager: it autologins the `aegis` user into the
+  # sphere kiosk. Its unit ships only Alias=display-manager.service (no
+  # WantedBy), so wire it into graphical.target explicitly, then make graphical
+  # the default target so it starts on boot.
+  mkdir -p /etc/systemd/system/graphical.target.wants
+  ln -sf /usr/lib/systemd/system/greetd.service \
+         /etc/systemd/system/graphical.target.wants/greetd.service
+  ln -sf /usr/lib/systemd/system/greetd.service \
+         /etc/systemd/system/display-manager.service
+  systemctl set-default graphical.target >/dev/null 2>&1
+
+  # Create the kiosk user + its home now so the image is ready even before the
+  # first boot's sysusers/tmpfiles run.
+  systemd-sysusers >/dev/null 2>&1 || true
+  systemd-tmpfiles --create >/dev/null 2>&1 || true
+
+  echo ":: Aegis enabled — core agent + greetd sphere kiosk (user 'aegis') on boot."
 }
 
 post_upgrade() {
@@ -11,5 +33,7 @@ post_upgrade() {
 }
 
 pre_remove() {
-  systemctl disable seatd.service aegis-agent.service aegis-kiosk.service >/dev/null 2>&1 || true
+  systemctl disable aegis-agent.service >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/graphical.target.wants/greetd.service \
+        /etc/systemd/system/display-manager.service
 }

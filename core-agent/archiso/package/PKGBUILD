@@ -11,7 +11,7 @@ arch=('x86_64')
 url="https://github.com/kevmill29/AegisOS"
 license=('MIT')
 depends=(
-  'cage' 'seatd' 'electron' 'dbus'
+  'cage' 'greetd' 'electron' 'dbus'
   'pipewire' 'pipewire-pulse' 'wireplumber' 'libpulse'
   'mesa' 'vulkan-icd-loader'
 )

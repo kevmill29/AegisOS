@@ -7,10 +7,11 @@
   ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚═╝╚══════╝    ╚═════╝ ╚══════╝
 
   Aegis OS — live environment (Arch-based, stock kernel).
-  The sphere kiosk is starting on tty1. To drop to this shell: Ctrl-Alt-F2.
+  The sphere kiosk runs on tty1 as user 'aegis'. This console is another VT.
 
-  Install to disk ....  sudo aegis-installer   (guided: archinstall + Aegis)
+  Install to disk ....  pick "Install Aegis OS" at the boot menu,
+                        or from here: sudo aegis-installer
   Agent status .......  systemctl status aegis-agent
-  Kiosk status .......  systemctl status aegis-kiosk
+  Kiosk (greetd) .....  systemctl status greetd
+  Audio devices ......  sudo -u aegis pactl list short sinks
   Network ............  already up via systemd-networkd / iwctl for Wi-Fi
-

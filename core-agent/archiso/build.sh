@@ -80,7 +80,9 @@ install -Dm755 "$AGENT"                              "$PKGSTAGE/root/usr/bin/aeg
 install -Dm755 "$OVERLAY/package/aegis-session"      "$PKGSTAGE/root/usr/bin/aegis-session"
 install -Dm755 "$REPO_ROOT/iso/fake-game"            "$PKGSTAGE/root/usr/bin/fake-game"
 install -Dm644 "$OVERLAY/package/aegis-agent.service" "$PKGSTAGE/root/usr/lib/systemd/system/aegis-agent.service"
-install -Dm644 "$OVERLAY/package/aegis-kiosk.service" "$PKGSTAGE/root/usr/lib/systemd/system/aegis-kiosk.service"
+install -Dm644 "$OVERLAY/package/greetd-config.toml"  "$PKGSTAGE/root/usr/share/aegis/greetd-config.toml"
+install -Dm644 "$OVERLAY/package/sysusers-aegis.conf" "$PKGSTAGE/root/usr/lib/sysusers.d/aegis.conf"
+install -Dm644 "$OVERLAY/package/tmpfiles-aegis.conf" "$PKGSTAGE/root/usr/lib/tmpfiles.d/aegis.conf"
 mkdir -p "$PKGSTAGE/root/opt/aegis/frontend"
 cp "$FRONTEND/package.json" "$PKGSTAGE/root/opt/aegis/frontend/"
 cp -r "$FRONTEND/electron" "$FRONTEND/dist" "$PKGSTAGE/root/opt/aegis/frontend/"
@@ -103,10 +105,50 @@ echo "==> Package lists (Aegis userland + the aegis package itself)"
 cat "$OVERLAY/packages.aegis" >> "$PROFILE/packages.x86_64"
 printf '\n# Aegis overlay package (local repo)\naegis\n' >> "$PROFILE/packages.x86_64"
 
-echo "==> Overlay airootfs (motd, installer) + ship the local repo on the ISO"
+echo "==> Overlay airootfs (motd, installer, install-mode units) + ship repo"
 cp -a "$OVERLAY/airootfs/." "$PROFILE/airootfs/"
 mkdir -p "$PROFILE/airootfs/opt/aegis"
 cp -a "$BUILD_REPO" "$PROFILE/airootfs/opt/aegis/repo"
+
+echo "==> Enable the install-mode service (gated on the aegis.install cmdline)"
+mkdir -p "$PROFILE/airootfs/etc/systemd/system/multi-user.target.wants"
+ln -sf /etc/systemd/system/aegis-install.service \
+       "$PROFILE/airootfs/etc/systemd/system/multi-user.target.wants/aegis-install.service"
+
+echo "==> Boot menu: add a default 'Install Aegis OS' entry + relabel live"
+# UEFI (systemd-boot): a new install entry (sort-key 00 -> first/default) that
+# adds aegis.install, and relabel the stock live entry.
+ARCHISO_OPTS='archisobasedir=%INSTALL_DIR% archisosearchuuid=%ARCHISO_UUID%'
+cat > "$PROFILE/efiboot/loader/entries/00-aegis-install.conf" <<EOF
+title    Install Aegis OS
+sort-key 00
+linux    /%INSTALL_DIR%/boot/%ARCH%/vmlinuz-linux
+initrd   /%INSTALL_DIR%/boot/%ARCH%/initramfs-linux.img
+options  $ARCHISO_OPTS aegis.install
+EOF
+sed -i 's/^title .*/title    Aegis OS (live \/ try the sphere)/' \
+    "$PROFILE/efiboot/loader/entries/01-archiso-linux.conf"
+sed -i 's/^default .*/default 00-aegis-install.conf/' "$PROFILE/efiboot/loader/loader.conf"
+
+# BIOS (syslinux): prepend an install label, make it the default, relabel live.
+SL="$PROFILE/syslinux/archiso_sys-linux.cfg"
+python3 - "$SL" "$ARCHISO_OPTS" <<'PY'
+import sys
+p, opts = sys.argv[1], sys.argv[2]
+s = open(p).read()
+install = (
+    "LABEL aegisinstall\n"
+    "MENU LABEL Install Aegis OS\n"
+    "LINUX /%INSTALL_DIR%/boot/%ARCH%/vmlinuz-linux\n"
+    "INITRD /%INSTALL_DIR%/boot/%ARCH%/initramfs-linux.img\n"
+    "APPEND " + opts + " aegis.install\n\n"
+)
+s = s.replace("MENU LABEL Arch Linux install medium (%ARCH%, BIOS)",
+              "MENU LABEL Aegis OS (live / try the sphere)")
+open(p, "w").write(install + s)
+PY
+sed -i -e 's/^DEFAULT .*/DEFAULT aegisinstall/' -e 's/^TIMEOUT .*/TIMEOUT 100/' \
+    "$PROFILE/syslinux/archiso_sys.cfg"
 
 echo "==> File permissions for the installer launcher"
 python3 - "$PROFILE/profiledef.sh" <<'PY'
@@ -122,8 +164,12 @@ PY
 echo "==> Build ISO with mkarchiso"
 chroot "$BS" bash -c "set -e; rm -rf $WORK $CHROOT_OUT; mkarchiso -v -w $WORK -o $CHROOT_OUT /root/aegis-profile"
 
-echo "==> Copy ISO out"
+echo "==> Copy ISO out + checksum"
 mkdir -p "$OUT_DIR"
 cp "$BS$CHROOT_OUT"/*.iso "$OUT_DIR/aegis-arch.iso"
+# Emit a checksum next to the ISO so a flash can be verified (a SQUASHFS read
+# error at boot means a bad USB write, not a bad build — this lets you tell).
+( cd "$OUT_DIR" && sha256sum aegis-arch.iso > aegis-arch.iso.sha256 )
 echo "==> Done: $OUT_DIR/aegis-arch.iso"
 ls -la "$OUT_DIR/aegis-arch.iso"
+cat "$OUT_DIR/aegis-arch.iso.sha256"

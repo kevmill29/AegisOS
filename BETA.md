@@ -13,37 +13,39 @@ launches and self-throttles so it never steals frames from your game.
 3. Boot the stick. Both **UEFI** and **BIOS** are supported — it uses the stock
    Arch kernel, so the console renders everywhere (no more blind UEFI screen).
 
-## What you should see
+## Boot menu
 
-- The boot menu ("Aegis OS", UEFI or BIOS), then the stock Arch live boot.
-- The **sphere kiosk** takes over tty1 (cage + Electron). The sphere pulses to
-  system/game audio and reacts to the agent's sleep-mode events.
-- Drop to a shell any time with **Ctrl-Alt-F2** (root autologin). Useful checks:
-  - `systemctl status aegis-agent` — the core agent
-  - `systemctl status aegis-kiosk` — the sphere session
-  - `journalctl -u aegis-agent -f` — watch `AEGIS_EVENT` lines
-- In-kiosk terminal overlay: **Ctrl-Alt-T**.
+Two entries (UEFI and BIOS), **"Install Aegis OS" is the default**:
+
+- **Install Aegis OS** — runs the guided installer straight away (see below).
+- **Aegis OS (live / try the sphere)** — boots the live sphere without touching
+  your disk.
 
 ## Install to disk
 
-From the live shell (Ctrl-Alt-F2):
+Just pick **"Install Aegis OS"** at the boot menu. It runs:
 
-```
-sudo aegis-installer
-```
+1. Arch's own **archinstall** — you choose the disk + base system.
+2. The **Aegis overlay** — the `aegis` package plus the gaming stack (Steam,
+   Proton/Xwayland, Vulkan) from the repo baked onto the ISO.
 
-Step 1 runs Arch's own **archinstall** (you pick the disk + base system).
-Step 2 lays the Aegis overlay on top — the `aegis` package plus the gaming
-stack (Steam, Proton/Xwayland, Vulkan) from the repo baked onto the ISO — so the
-installed disk boots into the same sphere.
+The installed disk boots into the same sphere. (You can also run
+`sudo aegis-installer` by hand from a console.)
 
-## Known beta limitations (being worked)
+## What you should see (live or installed)
 
-- **Steam as root:** the kiosk session currently runs as `root`, and Steam
-  refuses to launch as root. Game *detection*, self-throttle, the sphere, and
-  audio all work; actually launching Steam needs the kiosk moved to a dedicated
-  non-root user (planned via greetd). Until then, launch Steam from a non-root
-  login on another VT.
+- The **sphere kiosk** on tty1, running as the unprivileged `aegis` user (cage +
+  Electron). It pulses to system/game audio and reacts to the agent's sleep-mode
+  events. On a multi-monitor setup it uses a single output (no split).
+- Drop to a console with **Ctrl-Alt-F2**. Useful checks:
+  - `systemctl status aegis-agent` — the core agent
+  - `systemctl status greetd` — the kiosk display manager
+  - `sudo -u aegis pactl list short sinks` — audio devices seen by the kiosk
+  - `journalctl -u aegis-agent -f` — watch `AEGIS_EVENT` lines
+- In-kiosk terminal overlay: **Ctrl-Alt-T**.
+
+## Known beta limitations
+
 - **Electron 43:** the frontend was authored against Electron 33. Core APIs are
   stable; flagged for a boot check.
 - **LLM throttle brain:** built but dormant on the image (the `llm` cargo

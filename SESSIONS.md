@@ -1,6 +1,47 @@
 # Aegis — Session Handoff
 
-Last updated: 2026-07-08 (beta ISO: sphere kiosk + gaming + archinstall overlay, all integrated)
+Last updated: 2026-07-08 (debug pass: non-root kiosk, installer boot entry, single-output, audio perms)
+
+## MILESTONE: First real-hardware debug pass (4 fixes) + a corrupt-medium note
+
+User flashed the beta and reported: (1) it only boots live, no install; (2) no
+audio / headset not detected; (3) the sphere splits across two monitors. Photo
+also showed Steam's "Cannot run as root user". Fixes (all verified in the image,
+one rebuild):
+
+1. **Installer boot entry.** Added a default "Install Aegis OS" menu entry
+   (UEFI + BIOS) that sets `aegis.install`; `aegis-install.service`
+   (ConditionKernelCommandLine=aegis.install) runs `aegis-installer` on tty1,
+   and a greetd drop-in (`ConditionKernelCommandLine=!aegis.install`) keeps the
+   kiosk out of the way in install mode. Live sphere is the secondary entry.
+2. **Non-root kiosk (fixes Steam AND audio).** The kiosk now runs as an
+   unprivileged `aegis` user via **greetd** (`initial_session` autologin →
+   `cage -m last -s -- /usr/bin/aegis-session`). Steam refuses root, and
+   PipeWire/WirePlumber are meant to run per-user (why the headset didn't
+   enumerate as root). New package bits: `sysusers-aegis.conf` (+groups
+   video/render/input/audio/wheel), `tmpfiles-aegis.conf` (/home/aegis),
+   `greetd-config.toml` shipped to `/usr/share/aegis/` and copied to
+   `/etc/greetd/config.toml` by the scriptlet (greetd owns that path → conflict
+   if packaged directly). Scriptlet enables greetd via graphical.target.wants +
+   display-manager alias + set-default graphical. Dropped seatd (logind handles
+   seats under greetd); removed aegis-kiosk.service.
+3. **Single output.** `cage -m last` (was default `-m extend`, which spanned
+   both monitors and split the sphere).
+4. **Audio capture permission.** `frontend/electron/main.cjs` now
+   setPermissionRequestHandler/CheckHandler granting media/audioCapture — Chromium
+   denies getUserMedia by default in a kiosk, so the analyser got no stream.
+
+**Corrupt-medium note (NOT a build bug):** user separately hit `SQUASHFS error
+… -5` / "Freezing execution" booting an older image in VirtualBox. Verified the
+built ISO is byte-identical original==copy AND a full unsquashfs extraction
+reads every block cleanly (exit 0) — so that was a bad USB write / flaky medium,
+not the build. build.sh now emits `dist/aegis-arch.iso.sha256` to verify flashes.
+
+Still deferred to debug: booting the greetd/cage/Electron kiosk on real GPU
+hardware, and a real `aegis-installer` disk run (archinstall TUI under the
+Type=idle tty1 service; /mnt mount-state at the overlay step).
+
+## MILESTONE: Full beta ISO — sphere kiosk + gaming stack + disk installer, one package
 
 ## MILESTONE: Full beta ISO — sphere kiosk + gaming stack + disk installer, one package
 

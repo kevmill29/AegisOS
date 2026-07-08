@@ -1,7 +1,7 @@
 // Electron main process: owns the window and the TCP link to the core agent.
 // The renderer never touches the network — events arrive via the preload bridge,
 // which keeps contextIsolation on and nodeIntegration off.
-const { app, BrowserWindow, globalShortcut, ipcMain } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, session } = require('electron');
 const { spawn } = require('node:child_process');
 const net = require('node:net');
 const path = require('node:path');
@@ -140,6 +140,18 @@ ipcMain.on('aegis:ui-ready', (event) => {
 });
 
 app.whenReady().then(() => {
+  // The sphere reacts to sound via getUserMedia on the system-output monitor.
+  // In a kiosk there's no one to click "allow", and Chromium denies mic/audio
+  // capture by default — so auto-grant media permissions for our own content.
+  // Without this the audio analyser silently gets no stream and the sphere
+  // falls back to its synthetic beat (looks like "not responding to audio").
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(permission === 'media' || permission === 'audioCapture');
+  });
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) => {
+    return permission === 'media' || permission === 'audioCapture';
+  });
+
   createWindow();
   connectToAgent();
 
