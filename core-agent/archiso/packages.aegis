@@ -1,24 +1,32 @@
-# Aegis OS package overlay — appended to releng's packages.x86_64 by build.sh.
-# Kept to packages guaranteed to resolve in the Arch repos so the ISO build is
-# reproducible. The heavier gaming userland (steam, electron, lib32-* Vulkan,
-# proprietary nvidia) and the sphere kiosk are layered in the next phase once
-# this trusted base is confirmed to build and boot.
+# Aegis OS package overlay — appended to releng's packages.x86_64 by build.sh,
+# which also appends `aegis` itself (built from ./package into a local repo).
+# These are the gaming/graphics/audio userland; the `aegis` package pulls the
+# kiosk runtime (cage, electron, seatd, pipewire, ...) as hard dependencies.
 
-# --- audio (system + game output capture for the sphere) ---
+# --- graphics: open-source Vulkan for all vendors + software fallback ---
+mesa
+vulkan-icd-loader
+vulkan-swrast
+vulkan-radeon
+vulkan-intel
+lib32-mesa
+lib32-vulkan-icd-loader
+lib32-vulkan-radeon
+lib32-vulkan-intel
+
+# --- gaming: Steam + Proton (Proton games run under Xwayland) ---
+steam
+xorg-xwayland
+
+# --- audio (also aegis deps; listed so the live env has them too) ---
 pipewire
 pipewire-pulse
 pipewire-alsa
 wireplumber
 libpulse
 
-# --- graphics: software + open-source vendor Vulkan (VM-safe, no proprietary) ---
-mesa
-vulkan-icd-loader
-vulkan-swrast
-vulkan-radeon
-vulkan-intel
-
-# --- Wayland kiosk infrastructure (session launch for the sphere frontend) ---
+# --- Wayland kiosk: cage compositor + Electron (the audio-reactive sphere) ---
 cage
 seatd
-greetd
+electron
+dbus

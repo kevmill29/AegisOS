@@ -7,8 +7,10 @@
   ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚═╝╚══════╝    ╚═════╝ ╚══════╝
 
   Aegis OS — live environment (Arch-based, stock kernel).
+  The sphere kiosk is starting on tty1. To drop to this shell: Ctrl-Alt-F2.
 
+  Install to disk ....  sudo aegis-installer   (guided: archinstall + Aegis)
   Agent status .......  systemctl status aegis-agent
-  Install to disk ....  archinstall        (Arch's guided installer)
+  Kiosk status .......  systemctl status aegis-kiosk
   Network ............  already up via systemd-networkd / iwctl for Wi-Fi
 

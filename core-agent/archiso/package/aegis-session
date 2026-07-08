@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Aegis sphere kiosk session: cage (Wayland kiosk compositor) running the
+# Electron frontend fullscreen. Launched by aegis-kiosk.service on tty1 under
+# systemd. Seat access is via the seatd daemon (seatd.service, enabled by the
+# package); systemd/udev already provide device nodes, so unlike the old
+# pre-archiso init this does not hand-roll udev.
+set -u
+
+export HOME=/root
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/aegis}"
+mkdir -p "$XDG_RUNTIME_DIR"
+chmod 0700 "$XDG_RUNTIME_DIR"
+
+# Wait for a DRM device (KMS). Under UEFI, simpledrm or the real GPU driver
+# provides /dev/dri/card0; in a VM, bochs/virtio-gpu does. Give slow machines a
+# moment, then fail clearly so systemd restarts us and the journal shows why.
+for _ in $(seq 1 30); do
+  [ -e /dev/dri/card0 ] && break
+  sleep 0.5
+done
+if [ ! -e /dev/dri/card0 ]; then
+  echo "aegis-session: no /dev/dri/card0 — no KMS driver for this GPU" >&2
+  exit 1
+fi
+
+# Arch's libseat has no builtin backend, so use the seatd daemon (proven path
+# from the pre-archiso kiosk). seatd.service is enabled by the package.
+export LIBSEAT_BACKEND=seatd
+
+# Software rendering fallback: cage/wlroots on simpledrm or a VM GPU has no EGL
+# acceleration, so force the pixman renderer (needs no EGL). On real GPU
+# hardware wlroots picks up the accelerated path automatically.
+export WLR_RENDERER_ALLOW_SOFTWARE=1
+export WLR_RENDERER=pixman
+export AEGIS_KIOSK=1
+
+# Audio (all non-fatal): system PipeWire so games have an output sink and the
+# sphere has a source, then route the default capture to the sink's monitor so
+# the sphere reacts to what's actually playing rather than a (nonexistent) mic.
+if command -v pipewire >/dev/null 2>&1 && ! pgrep -x pipewire >/dev/null 2>&1; then
+  mkdir -p /var/log
+  pipewire       >/var/log/aegis-audio.log 2>&1 &
+  sleep 0.5
+  wireplumber    >>/var/log/aegis-audio.log 2>&1 &
+  pipewire-pulse >>/var/log/aegis-audio.log 2>&1 &
+  (
+    for _ in $(seq 1 20); do
+      sink="$(pactl get-default-sink 2>/dev/null)"
+      if [ -n "$sink" ] && pactl list short sources 2>/dev/null | grep -q "${sink}.monitor"; then
+        pactl set-default-source "${sink}.monitor" 2>/dev/null && break
+      fi
+      sleep 1
+    done
+  ) >>/var/log/aegis-audio.log 2>&1 &
+fi
+
+# Electron as root needs --no-sandbox; native Wayland via ozone; WebGL on
+# GPU-less targets via ANGLE-on-SwiftShader (NOT --disable-gpu, which kills
+# WebGL). dbus-run-session gives Chromium the session bus it expects. cage is
+# the compositor and Electron its only client, fullscreen.
+mkdir -p /var/log
+echo "--- aegis-session $(date 2>/dev/null) ---" >> /var/log/aegis-session.log
+export ELECTRON_ENABLE_LOGGING=1
+exec dbus-run-session -- cage -- electron /opt/aegis/frontend \
+  --no-sandbox \
+  --ozone-platform=wayland \
+  --enable-features=UseOzonePlatform,WaylandWindowDecorations \
+  --use-gl=angle \
+  --use-angle=swiftshader \
+  --enable-unsafe-swiftshader \
+  >> /var/log/aegis-session.log 2>&1

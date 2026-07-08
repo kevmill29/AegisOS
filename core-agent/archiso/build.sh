@@ -6,8 +6,13 @@
 # every install issue we hit (the UEFI blind console, boot-medium hangs) came
 # from that homemade plumbing. archiso gives us the *stock* Arch kernel (all
 # console/GPU/USB/net drivers built in — boots reliably on UEFI and BIOS) and a
-# proper systemd live environment. Aegis rides on top as an overlay: the Rust
-# agent + its service, our packages, branding, and archinstall for disk installs.
+# proper systemd live environment.
+#
+# Aegis rides on top as a single pacman package (`aegis`, built here from
+# ./package into a local repo baked onto the ISO). The live env installs it and
+# boots straight into the sphere kiosk; `aegis-installer` installs the very same
+# package onto a disk after archinstall lays down the base system. One overlay,
+# two consumers.
 #
 # Run as root inside the WSL Arch build chroot (which has archiso installed):
 #   wsl -d Ubuntu -u root -- bash core-agent/archiso/build.sh
@@ -16,18 +21,29 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"      # .../core-agent
 OVERLAY="$REPO_ROOT/archiso"                                       # our overlay tree
 AGENT="$REPO_ROOT/target/x86_64-unknown-linux-musl/release/aegis-agent"
+FRONTEND="$(dirname "$REPO_ROOT")/frontend"
 OUT_DIR="$(dirname "$REPO_ROOT")/dist"
 
-# Arch build host chroot (mkarchiso must run on Arch; we already have this from
-# the old installer and installed `archiso` into it during the viability probe).
+# Arch build host chroot (mkarchiso + makepkg must run on Arch).
 BS=/root/aegis/iso-build/iso/arch-bootstrap
 PROFILE="$BS/root/aegis-profile"        # profile lives on the chroot's ext4, NOT
-WORK="/root/archwork"                    # /mnt/c — mksquashfs/loop need real fs
+WORK="/root/archwork"                    # /mnt/c — mksquashfs/loop need a real fs
 CHROOT_OUT="/root/archout"
+PKGSTAGE="$BS/home/builder/aegis-pkg"    # makepkg workspace (must be a real user)
+BUILD_REPO="$BS/opt/aegis/repo"          # local repo, file:///opt/aegis/repo in chroot
 
 # --- preflight ---------------------------------------------------------------
 [ -x "$AGENT" ] || { echo "missing musl agent: $AGENT (build it first)" >&2; exit 1; }
+[ -f "$FRONTEND/dist/index.html" ] || { echo "missing frontend build: $FRONTEND/dist (npm run build)" >&2; exit 1; }
 [ -d "$BS/usr/share/archiso/configs/releng" ] || { echo "archiso not installed in $BS" >&2; exit 1; }
+
+# chroot mounts up-front: needed by pacman (base-devel), makepkg, and mkarchiso.
+mount -t proc proc "$BS/proc" 2>/dev/null || true
+mount -t sysfs sys "$BS/sys" 2>/dev/null || true
+mount -o bind /dev "$BS/dev" 2>/dev/null || true
+cp /etc/resolv.conf "$BS/etc/resolv.conf" 2>/dev/null || true
+cleanup(){ umount -l "$BS/dev" "$BS/sys" "$BS/proc" 2>/dev/null || true; }
+trap cleanup EXIT
 
 echo "==> Fresh Aegis profile from official releng"
 rm -rf "$PROFILE"
@@ -41,50 +57,70 @@ sed -i \
   -e 's/^iso_application=.*/iso_application="Aegis OS Live\/Installer"/' \
   "$PROFILE/profiledef.sh"
 
-echo "==> Enable [multilib] in the profile pacman.conf (lib32 gaming libs)"
+echo "==> Enable [multilib] + [aegis] repo in the profile pacman.conf"
 if ! grep -qE '^\[multilib\]' "$PROFILE/pacman.conf"; then
   printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> "$PROFILE/pacman.conf"
 fi
+if ! grep -qE '^\[aegis\]' "$PROFILE/pacman.conf"; then
+  printf '\n[aegis]\nSigLevel = Optional TrustAll\nServer = file:///opt/aegis/repo\n' >> "$PROFILE/pacman.conf"
+fi
 
-echo "==> Append Aegis packages"
+# --- build the `aegis` package ----------------------------------------------
+echo "==> Preparing the Arch build user + base-devel"
+chroot "$BS" bash -c '
+  set -e
+  id builder >/dev/null 2>&1 || useradd -m builder
+  pacman -Sy --needed --noconfirm base-devel >/dev/null
+'
+
+echo "==> Staging the aegis package tree"
+rm -rf "$PKGSTAGE"; mkdir -p "$PKGSTAGE/root"
+cp "$OVERLAY/package/PKGBUILD" "$OVERLAY/package/aegis.install" "$PKGSTAGE/"
+install -Dm755 "$AGENT"                              "$PKGSTAGE/root/usr/bin/aegis-agent"
+install -Dm755 "$OVERLAY/package/aegis-session"      "$PKGSTAGE/root/usr/bin/aegis-session"
+install -Dm755 "$REPO_ROOT/iso/fake-game"            "$PKGSTAGE/root/usr/bin/fake-game"
+install -Dm644 "$OVERLAY/package/aegis-agent.service" "$PKGSTAGE/root/usr/lib/systemd/system/aegis-agent.service"
+install -Dm644 "$OVERLAY/package/aegis-kiosk.service" "$PKGSTAGE/root/usr/lib/systemd/system/aegis-kiosk.service"
+mkdir -p "$PKGSTAGE/root/opt/aegis/frontend"
+cp "$FRONTEND/package.json" "$PKGSTAGE/root/opt/aegis/frontend/"
+cp -r "$FRONTEND/electron" "$FRONTEND/dist" "$PKGSTAGE/root/opt/aegis/frontend/"
+chroot "$BS" chown -R builder:builder /home/builder/aegis-pkg
+
+echo "==> Building the package with makepkg"
+chroot "$BS" bash -c '
+  set -e
+  cd /home/builder/aegis-pkg
+  runuser -u builder -- makepkg -f --nodeps --skipinteg
+'
+
+echo "==> Publishing to the local repo"
+rm -rf "$BUILD_REPO"; mkdir -p "$BUILD_REPO"
+cp "$PKGSTAGE"/aegis-*.pkg.tar.zst "$BUILD_REPO/"
+chroot "$BS" bash -c 'cd /opt/aegis/repo && repo-add aegis.db.tar.gz aegis-*.pkg.tar.zst >/dev/null'
+
+# --- assemble the profile ----------------------------------------------------
+echo "==> Package lists (Aegis userland + the aegis package itself)"
 cat "$OVERLAY/packages.aegis" >> "$PROFILE/packages.x86_64"
+printf '\n# Aegis overlay package (local repo)\naegis\n' >> "$PROFILE/packages.x86_64"
 
-echo "==> Overlay airootfs (services, branding, session, installer launcher)"
+echo "==> Overlay airootfs (motd, installer) + ship the local repo on the ISO"
 cp -a "$OVERLAY/airootfs/." "$PROFILE/airootfs/"
+mkdir -p "$PROFILE/airootfs/opt/aegis"
+cp -a "$BUILD_REPO" "$PROFILE/airootfs/opt/aegis/repo"
 
-echo "==> Stage the Aegis agent into the live root"
-install -Dm755 "$AGENT" "$PROFILE/airootfs/usr/local/bin/aegis-agent"
-install -Dm755 "$REPO_ROOT/iso/fake-game" "$PROFILE/airootfs/usr/local/bin/fake-game"
-
-echo "==> Enable the agent service in the live image"
-mkdir -p "$PROFILE/airootfs/etc/systemd/system/multi-user.target.wants"
-ln -sf /etc/systemd/system/aegis-agent.service \
-       "$PROFILE/airootfs/etc/systemd/system/multi-user.target.wants/aegis-agent.service"
-
-# file ownership/permissions inside the image (append to profiledef's array).
-# archiso applies these after copying airootfs; scripts must be executable.
+echo "==> File permissions for the installer launcher"
 python3 - "$PROFILE/profiledef.sh" <<'PY'
 import sys, re
 p = sys.argv[1]
 s = open(p).read()
-adds = [
-  '  ["/usr/local/bin/aegis-agent"]="0:0:755"',
-  '  ["/usr/local/bin/fake-game"]="0:0:755"',
-]
-# insert our entries just before the closing ) of file_permissions=(...)
-s = re.sub(r'(file_permissions=\([^)]*)', lambda m: m.group(1) + "\n" + "\n".join(adds) + "\n", s, count=1)
+add = '  ["/usr/local/bin/aegis-installer"]="0:0:755"\n'
+s = re.sub(r'(file_permissions=\()', r'\1\n' + add, s, count=1)
 open(p, "w").write(s)
 PY
 
-echo "==> Build ISO with mkarchiso (inside the Arch chroot)"
-mount -t proc proc "$BS/proc" 2>/dev/null || true
-mount -t sysfs sys "$BS/sys" 2>/dev/null || true
-mount -o bind /dev "$BS/dev" 2>/dev/null || true
-cp /etc/resolv.conf "$BS/etc/resolv.conf" 2>/dev/null || true
-
+# --- build the ISO -----------------------------------------------------------
+echo "==> Build ISO with mkarchiso"
 chroot "$BS" bash -c "set -e; rm -rf $WORK $CHROOT_OUT; mkarchiso -v -w $WORK -o $CHROOT_OUT /root/aegis-profile"
-
-umount -l "$BS/dev" "$BS/sys" "$BS/proc" 2>/dev/null || true
 
 echo "==> Copy ISO out"
 mkdir -p "$OUT_DIR"

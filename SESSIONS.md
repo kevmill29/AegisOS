@@ -1,6 +1,45 @@
 # Aegis — Session Handoff
 
-Last updated: 2026-07-08 (installer pivot → archiso + archinstall; base ISO built + UEFI-verified)
+Last updated: 2026-07-08 (beta ISO: sphere kiosk + gaming + archinstall overlay, all integrated)
+
+## MILESTONE: Full beta ISO — sphere kiosk + gaming stack + disk installer, one package
+
+Built the complete beta on the archiso base. Aegis is now a single pacman
+package (`aegis`, built by build.sh from `core-agent/archiso/package/` into a
+local repo baked onto the ISO). The live env installs it and boots straight
+into the sphere; `aegis-installer` installs the *same* package to disk.
+
+What went in (`core-agent/archiso/`):
+- `package/PKGBUILD` + `aegis.install` — binary package: agent, `aegis-session`
+  (cage → Electron sphere), frontend, `fake-game`, and the systemd units.
+  Post-install scriptlet enables `seatd`, `aegis-agent`, `aegis-kiosk`.
+- `package/aegis-session` — kiosk launcher, adapted for systemd/seatd (drops the
+  old hand-rolled udev; keeps the DRM wait, PipeWire monitor routing, and the
+  ANGLE/SwiftShader Electron flags for GPU-less/VM WebGL).
+- `package/aegis-kiosk.service` — runs the session on tty1, Conflicts the getty,
+  restarts on failure.
+- `airootfs/usr/local/bin/aegis-installer` — guided: runs `archinstall` for the
+  base, then applies the Aegis overlay to the target (enables multilib + the
+  `[aegis]` repo, copies the repo onto the target, `pacman -Sy aegis steam
+  xorg-xwayland lib32-*`). Handles archinstall leaving /mnt mounted or not.
+- `packages.aegis` — gaming/graphics/audio userland (steam, xorg-xwayland,
+  Vulkan incl. lib32, pipewire, cage, electron).
+- `build.sh` — now also: makepkg the package (as a `builder` user in the chroot),
+  `repo-add` a local repo, wire `[multilib]` + `[aegis]` into the profile
+  pacman.conf, ship the repo in the airootfs.
+
+Build result (this session): `mkarchiso` resolved 689 packages (aegis + steam +
+electron + lib32 Vulkan + archinstall + cage + …), the package scriptlet fired
+("Aegis enabled — seatd, the core agent, and the sphere kiosk will start on
+boot"), no conflicts → **1.9 GB `dist/aegis-arch.iso`, exit 0**. Shipped squashfs
+verified to carry the enabled service symlinks (aegis-agent/aegis-kiosk/seatd),
+`aegis-session`, the frontend, the `[aegis]` repo, steam, cage, and archinstall.
+
+**NOT yet runtime-tested** (deferred to the debug phase per direction): booting
+the sphere kiosk (cage→Electron under seatd; SwiftShader in a VM is slow), and a
+full `aegis-installer` disk install. Likely first debug targets: Electron 43 vs.
+the app (built for 33), the kiosk seat handoff (getty↔aegis-kiosk on tty1), and
+archinstall's /mnt mount state at the overlay step.
 
 ## MILESTONE: Installer pivoted off the hand-rolled stack onto archiso + archinstall
 

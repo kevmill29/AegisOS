@@ -1,0 +1,15 @@
+# Runs inside the target root at install time (both the live ISO build and the
+# on-disk install via aegis-installer). `systemctl enable` in a chroot just
+# creates the .wants symlinks offline — no running systemd required.
+post_install() {
+  systemctl enable seatd.service aegis-agent.service aegis-kiosk.service >/dev/null 2>&1
+  echo ":: Aegis enabled — seatd, the core agent, and the sphere kiosk will start on boot."
+}
+
+post_upgrade() {
+  post_install
+}
+
+pre_remove() {
+  systemctl disable seatd.service aegis-agent.service aegis-kiosk.service >/dev/null 2>&1 || true
+}

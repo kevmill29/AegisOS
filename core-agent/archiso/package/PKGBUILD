@@ -1,0 +1,31 @@
+# Aegis OS overlay package. This is a *binary* package: it does not compile
+# anything, it packages files that build.sh has already staged into ./root/
+# (the agent binary, the kiosk session + frontend, and the systemd units). The
+# same package is installed into the live ISO (so it boots straight into the
+# sphere) and onto the target disk by aegis-installer — one source of truth.
+pkgname=aegis
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Aegis OS: core agent + audio-reactive sphere kiosk (Arch overlay)"
+arch=('x86_64')
+url="https://github.com/kevmill29/AegisOS"
+license=('MIT')
+depends=(
+  'cage' 'seatd' 'electron' 'dbus'
+  'pipewire' 'pipewire-pulse' 'wireplumber' 'libpulse'
+  'mesa' 'vulkan-icd-loader'
+)
+optdepends=(
+  'steam: Steam + Proton gaming (the agent detects launches and self-throttles)'
+  'xorg-xwayland: run Steam/Proton games under the Wayland kiosk'
+)
+install=aegis.install
+options=('!strip' '!debug')
+
+package() {
+  # ./root is a complete filesystem tree assembled by build.sh.
+  cp -a "$startdir/root/." "$pkgdir/"
+  chmod 0755 "$pkgdir/usr/bin/aegis-agent" \
+             "$pkgdir/usr/bin/aegis-session" \
+             "$pkgdir/usr/bin/fake-game"
+}

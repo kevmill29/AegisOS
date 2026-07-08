@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Aegis guided disk installer. Installs a base Arch system with Arch's own
+# archinstall, then applies the Aegis overlay (the `aegis` package from the
+# local repo baked onto this ISO, plus the gaming userland). The result is a
+# disk that boots into the same sphere kiosk as this live environment.
+set -u
+
+REPO_SRC=/opt/aegis/repo          # local pacman repo shipped on the ISO
+TARGET=/mnt
+
+say()  { printf '\n\033[1;35m:: %s\033[0m\n' "$*"; }
+warn() { printf '\n\033[1;33m!! %s\033[0m\n' "$*"; }
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "Run as root: sudo aegis-installer" >&2
+  exit 1
+fi
+
+cat <<'BANNER'
+
+   █████╗ ███████╗ ██████╗ ██╗███████╗    ██████╗ ███████╗
+  ██╔══██╗██╔════╝██╔════╝ ██║██╔════╝   ██╔═══██╗██╔════╝
+  ███████║█████╗  ██║  ███╗██║███████╗   ██║   ██║███████╗
+  ██╔══██║██╔══╝  ██║   ██║██║╚════██║   ██║   ██║╚════██║
+  ██║  ██║███████╗╚██████╔╝██║███████║   ╚██████╔╝███████║
+  ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚═╝╚══════╝    ╚═════╝ ╚══════╝
+
+  Aegis OS installer
+
+  Step 1: Arch's guided installer sets up disks + a base system.
+  Step 2: Aegis lays its agent, sphere kiosk and gaming stack on top.
+
+BANNER
+read -rp "  Press Enter to launch the base installer (Ctrl-C to abort)... " _
+
+# --- Step 1: base Arch via the trusted guided installer ----------------------
+say "Launching archinstall (base system)"
+archinstall || { warn "archinstall exited non-zero; not applying the Aegis overlay."; exit 1; }
+
+# --- Step 2: locate the freshly installed root -------------------------------
+# archinstall usually leaves the new system mounted at /mnt. If it unmounted,
+# ask which partition it installed to so we can finish the overlay.
+if ! mountpoint -q "$TARGET"; then
+  warn "The installed system is not mounted at $TARGET."
+  echo "  Partitions on this machine:"
+  lsblk -pno NAME,SIZE,FSTYPE,TYPE | grep -E 'part$' || true
+  read -rp "  Enter the ROOT partition you installed to (e.g. /dev/nvme0n1p2), or blank to skip: " ROOTPART
+  [ -n "${ROOTPART:-}" ] || { warn "Skipped Aegis overlay. Boot the disk and run: pacman -Sy aegis"; exit 0; }
+  mount "$ROOTPART" "$TARGET" || { warn "Could not mount $ROOTPART"; exit 1; }
+  # Best-effort: mount the ESP so grub/systemd-boot updates land if needed.
+  ESP=$(lsblk -pno NAME,PARTTYPENAME | awk '/EFI System/{print $1; exit}')
+  [ -n "${ESP:-}" ] && { mkdir -p "$TARGET/boot"; mount "$ESP" "$TARGET/boot" 2>/dev/null || true; }
+fi
+
+# --- Step 3: enable multilib + the Aegis repo in the target ------------------
+say "Configuring the target for the Aegis overlay"
+PCONF="$TARGET/etc/pacman.conf"
+
+# multilib (Steam / lib32 Vulkan)
+if ! grep -qE '^\[multilib\]' "$PCONF"; then
+  printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> "$PCONF"
+fi
+
+# copy the local repo onto the target so `aegis` is installable now and later
+install -d "$TARGET/opt/aegis-repo"
+cp -a "$REPO_SRC/." "$TARGET/opt/aegis-repo/"
+if ! grep -qE '^\[aegis\]' "$PCONF"; then
+  cat >> "$PCONF" <<'EOF'
+
+[aegis]
+SigLevel = Optional TrustAll
+Server = file:///opt/aegis-repo
+EOF
+fi
+
+# --- Step 4: install the Aegis overlay + gaming userland into the target -----
+say "Installing the Aegis overlay (agent, sphere kiosk, gaming stack)"
+GAMING="steam xorg-xwayland lib32-mesa lib32-vulkan-icd-loader"
+if ! arch-chroot "$TARGET" bash -c "pacman -Sy --noconfirm aegis $GAMING"; then
+  warn "Overlay package install hit an error — the base Arch system is still installed."
+  warn "You can finish inside the target: arch-chroot $TARGET, then pacman -Sy aegis"
+  exit 1
+fi
+
+say "Aegis installed. Remove the USB stick and reboot into your new system."
