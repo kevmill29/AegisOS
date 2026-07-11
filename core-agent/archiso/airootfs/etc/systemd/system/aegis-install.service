@@ -14,7 +14,10 @@ ExecStart=/usr/local/bin/aegis-installer
 # Give the installer a real controlling terminal on tty1 for archinstall's TUI.
 StandardInput=tty
 StandardOutput=tty
-StandardError=journal
+# stderr must reach the user too: bash's `read -p` prompt and archinstall's
+# error text both go to stderr — with =journal the "Press Enter" prompt was
+# invisible and the installer looked frozen after the banner.
+StandardError=tty
 TTYPath=/dev/tty1
 TTYReset=yes
 TTYVHangup=yes

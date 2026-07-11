@@ -31,7 +31,11 @@ cat <<'BANNER'
   Step 2: Aegis lays its agent, sphere kiosk and gaming stack on top.
 
 BANNER
-read -rp "  Press Enter to launch the base installer (Ctrl-C to abort)... " _
+# Prompt on stdout explicitly: `read -p` writes to stderr, which under the
+# systemd unit once went to the journal — the user saw the banner and then an
+# apparently frozen screen, never this line.
+printf '  Press Enter to launch the base installer (Ctrl-C to abort)... '
+read -r _
 
 # --- Step 0: connectivity + a fast mirror ------------------------------------
 # archinstall's first move is a pacman DB sync ("Fetching Arch Linux package
@@ -58,7 +62,8 @@ if ! mountpoint -q "$TARGET"; then
   warn "The installed system is not mounted at $TARGET."
   echo "  Partitions on this machine:"
   lsblk -pno NAME,SIZE,FSTYPE,TYPE | grep -E 'part$' || true
-  read -rp "  Enter the ROOT partition you installed to (e.g. /dev/nvme0n1p2), or blank to skip: " ROOTPART
+  printf '  Enter the ROOT partition you installed to (e.g. /dev/nvme0n1p2), or blank to skip: '
+  read -r ROOTPART
   [ -n "${ROOTPART:-}" ] || { warn "Skipped Aegis overlay. Boot the disk and run: pacman -Sy aegis"; exit 0; }
   mount "$ROOTPART" "$TARGET" || { warn "Could not mount $ROOTPART"; exit 1; }
   # Best-effort: mount the ESP so grub/systemd-boot updates land if needed.
