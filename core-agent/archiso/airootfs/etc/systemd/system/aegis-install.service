@@ -1,9 +1,8 @@
 [Unit]
 Description=Aegis guided installer (live ISO)
-# Only when the "Install Aegis OS" boot entry was chosen (adds aegis.install to
-# the kernel command line). A normal live boot skips this and greetd runs the
-# sphere instead.
-ConditionKernelCommandLine=aegis.install
+# Pulled in ONLY by aegis-install.target (the text-installer boot entry sets
+# systemd.unit=aegis-install.target). Never enable this unit in a regular
+# target: its Conflicts= must not exist in a normal live boot's transaction.
 After=getty@tty1.service systemd-user-sessions.service network-online.target
 Wants=network-online.target
 Conflicts=getty@tty1.service greetd.service
@@ -23,6 +22,3 @@ TTYReset=yes
 TTYVHangup=yes
 Environment=TERM=linux
 Restart=no
-
-[Install]
-WantedBy=multi-user.target

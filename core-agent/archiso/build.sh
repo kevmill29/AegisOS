@@ -110,16 +110,17 @@ cp -a "$OVERLAY/airootfs/." "$PROFILE/airootfs/"
 mkdir -p "$PROFILE/airootfs/opt/aegis"
 cp -a "$BUILD_REPO" "$PROFILE/airootfs/opt/aegis/repo"
 
-echo "==> Enable the install-mode service (gated on the aegis.install cmdline)"
-mkdir -p "$PROFILE/airootfs/etc/systemd/system/multi-user.target.wants"
-ln -sf /etc/systemd/system/aegis-install.service \
-       "$PROFILE/airootfs/etc/systemd/system/multi-user.target.wants/aegis-install.service"
+# Install mode is NOT an enabled service: the text-installer boot entry boots
+# straight into aegis-install.target via systemd.unit= on the cmdline. An
+# always-enabled unit gated by ConditionKernelCommandLine was a trap — its
+# Conflicts=greetd/getty edges fired before the condition check and broke
+# normal live boots (frozen boot log, no sphere, no login).
 
 echo "==> Boot menu: live sphere is the default (install happens inside it)"
 # UEFI (systemd-boot): the DEFAULT entry boots the live sphere — the user sees
 # the product working on their hardware and clicks "Install Aegis OS" right in
 # the sphere (GUI installer -> silent archinstall + overlay). The text-mode
-# installer stays as a secondary entry (aegis.install cmdline) for recovery,
+# installer stays as a secondary entry (systemd.unit=aegis-install.target) for recovery,
 # BIOS machines, and anyone who prefers a console.
 ARCHISO_OPTS='archisobasedir=%INSTALL_DIR% archisosearchuuid=%ARCHISO_UUID%'
 cat > "$PROFILE/efiboot/loader/entries/50-aegis-install.conf" <<EOF
@@ -127,7 +128,7 @@ title    Aegis OS installer (text mode / recovery)
 sort-key 50
 linux    /%INSTALL_DIR%/boot/%ARCH%/vmlinuz-linux
 initrd   /%INSTALL_DIR%/boot/%ARCH%/initramfs-linux.img
-options  $ARCHISO_OPTS aegis.install
+options  $ARCHISO_OPTS systemd.unit=aegis-install.target
 EOF
 sed -i 's/^title .*/title    Aegis OS (live · install from inside)/' \
     "$PROFILE/efiboot/loader/entries/01-archiso-linux.conf"
@@ -146,7 +147,7 @@ install = (
     "MENU LABEL Aegis OS installer (text mode)\n"
     "LINUX /%INSTALL_DIR%/boot/%ARCH%/vmlinuz-linux\n"
     "INITRD /%INSTALL_DIR%/boot/%ARCH%/initramfs-linux.img\n"
-    "APPEND " + opts + " aegis.install\n"
+    "APPEND " + opts + " systemd.unit=aegis-install.target\n"
 )
 s = s.replace("MENU LABEL Arch Linux install medium (%ARCH%, BIOS)",
               "MENU LABEL Aegis OS (live · install from inside)")

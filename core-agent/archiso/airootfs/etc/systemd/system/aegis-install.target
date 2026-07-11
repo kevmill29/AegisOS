@@ -1,0 +1,14 @@
+[Unit]
+Description=Aegis text installer mode
+# The text-installer boot entry selects this target directly via
+# systemd.unit=aegis-install.target on the kernel command line. That is the
+# whole gating mechanism: on a normal live boot this target (and the installer
+# service it pulls in) is never part of the transaction, so its conflicts
+# can't touch greetd/getty. (The previous design — an always-enabled service
+# gated by ConditionKernelCommandLine — was broken: Conflicts= edges fire when
+# the boot transaction is built, BEFORE conditions are checked, so a live boot
+# lost both greetd and the tty1 login and froze on the boot log.)
+Requires=multi-user.target
+After=multi-user.target
+Wants=aegis-install.service
+AllowIsolate=yes
