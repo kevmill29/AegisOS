@@ -29,6 +29,16 @@ Just pick **"Install Aegis OS"** at the boot menu. It runs:
 2. The **Aegis overlay** — the `aegis` package plus the gaming stack (Steam,
    Proton/Xwayland, Vulkan) from the repo baked onto the ISO.
 
+When archinstall finishes, **decline its final prompts (don't reboot from
+inside it)** — you return to the Aegis installer, which applies the overlay,
+verifies it, and then asks *you* to press Enter to reboot. A shutdown
+inhibitor blocks stray reboots while only half the install is on disk.
+
+If a machine ever ends up with base Arch but no Aegis (boots to a bare CLI
+login), boot **"Install Aegis OS"** again and type `overlay` at the first
+prompt — it skips archinstall and just applies the overlay to the existing
+install.
+
 The installed disk boots into the same sphere. (You can also run
 `sudo aegis-installer` by hand from a console.)
 

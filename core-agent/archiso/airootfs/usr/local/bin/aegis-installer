@@ -34,8 +34,10 @@ BANNER
 # Prompt on stdout explicitly: `read -p` writes to stderr, which under the
 # systemd unit once went to the journal — the user saw the banner and then an
 # apparently frozen screen, never this line.
-printf '  Press Enter to launch the base installer (Ctrl-C to abort)... '
-read -r _
+printf '  Press Enter to launch the base installer (Ctrl-C to abort),\n'
+printf '  or type "overlay" + Enter if Arch is already on the disk and only\n'
+printf '  the Aegis overlay is missing (e.g. the machine rebooted mid-install): '
+read -r MODE
 
 # --- Step 0: connectivity + a fast mirror ------------------------------------
 # archinstall's first move is a pacman DB sync ("Fetching Arch Linux package
@@ -52,8 +54,24 @@ fi
 echo 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch' > /etc/pacman.d/mirrorlist
 
 # --- Step 1: base Arch via the trusted guided installer ----------------------
-say "Launching archinstall (base system)"
-archinstall || { warn "archinstall exited non-zero; not applying the Aegis overlay."; exit 1; }
+if [ "${MODE:-}" = "overlay" ]; then
+  say "Skipping the base install — applying only the Aegis overlay"
+else
+  say "Launching archinstall (base system)"
+  echo "  IMPORTANT: when archinstall finishes, decline its final prompts — do"
+  echo "  NOT reboot from inside it. You return here automatically and Aegis"
+  echo "  installs itself on top (Step 2). This installer prompts for the"
+  echo "  reboot itself once everything is on the disk."
+  sleep 3
+  # Hold a shutdown inhibitor while the disk holds only half an install:
+  # rebooting here would leave a vanilla Arch with no Aegis on it (exactly the
+  # failure we shipped once). If anything — archinstall or a stray `reboot` on
+  # another VT — tries, logind refuses and this script continues to Step 2.
+  systemd-inhibit --who="Aegis installer" \
+    --why="Base system is on disk but the Aegis overlay is not yet — finish the installer first" \
+    --what=shutdown --mode=block \
+    archinstall || { warn "archinstall exited non-zero; not applying the Aegis overlay."; exit 1; }
+fi
 
 # --- Step 2: locate the freshly installed root -------------------------------
 # archinstall usually leaves the new system mounted at /mnt. If it unmounted,
@@ -101,4 +119,16 @@ if ! arch-chroot "$TARGET" bash -c "pacman -Sy --noconfirm aegis $GAMING"; then
   exit 1
 fi
 
-say "Aegis installed. Remove the USB stick and reboot into your new system."
+# Don't claim success on faith — prove the overlay is on the disk. If this
+# check fails the user gets a warning instead of booting into a bare CLI and
+# wondering what they did wrong.
+if ! arch-chroot "$TARGET" pacman -Q aegis >/dev/null 2>&1; then
+  warn "Verification failed: the aegis package is NOT in the target system."
+  warn "Re-run this installer and type 'overlay' at the first prompt."
+  exit 1
+fi
+
+say "Aegis OS is on the disk — agent, sphere kiosk and gaming stack verified."
+printf '  Remove the install USB, then press Enter to reboot into Aegis OS... '
+read -r _
+systemctl reboot
