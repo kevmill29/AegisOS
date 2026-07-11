@@ -115,47 +115,55 @@ mkdir -p "$PROFILE/airootfs/etc/systemd/system/multi-user.target.wants"
 ln -sf /etc/systemd/system/aegis-install.service \
        "$PROFILE/airootfs/etc/systemd/system/multi-user.target.wants/aegis-install.service"
 
-echo "==> Boot menu: add a default 'Install Aegis OS' entry + relabel live"
-# UEFI (systemd-boot): a new install entry (sort-key 00 -> first/default) that
-# adds aegis.install, and relabel the stock live entry.
+echo "==> Boot menu: live sphere is the default (install happens inside it)"
+# UEFI (systemd-boot): the DEFAULT entry boots the live sphere — the user sees
+# the product working on their hardware and clicks "Install Aegis OS" right in
+# the sphere (GUI installer -> silent archinstall + overlay). The text-mode
+# installer stays as a secondary entry (aegis.install cmdline) for recovery,
+# BIOS machines, and anyone who prefers a console.
 ARCHISO_OPTS='archisobasedir=%INSTALL_DIR% archisosearchuuid=%ARCHISO_UUID%'
-cat > "$PROFILE/efiboot/loader/entries/00-aegis-install.conf" <<EOF
-title    Install Aegis OS
-sort-key 00
+cat > "$PROFILE/efiboot/loader/entries/50-aegis-install.conf" <<EOF
+title    Aegis OS installer (text mode / recovery)
+sort-key 50
 linux    /%INSTALL_DIR%/boot/%ARCH%/vmlinuz-linux
 initrd   /%INSTALL_DIR%/boot/%ARCH%/initramfs-linux.img
 options  $ARCHISO_OPTS aegis.install
 EOF
-sed -i 's/^title .*/title    Aegis OS (live \/ try the sphere)/' \
+sed -i 's/^title .*/title    Aegis OS (live · install from inside)/' \
     "$PROFILE/efiboot/loader/entries/01-archiso-linux.conf"
-sed -i 's/^default .*/default 00-aegis-install.conf/' "$PROFILE/efiboot/loader/loader.conf"
+sed -i 's/^default .*/default 01-archiso-linux.conf/' "$PROFILE/efiboot/loader/loader.conf"
 
-# BIOS (syslinux): prepend an install label, make it the default, relabel live.
+# BIOS (syslinux): live sphere stays the default; append the text installer as
+# a secondary label (on BIOS it's the ONLY install path — the GUI backend
+# requires UEFI for systemd-boot).
 SL="$PROFILE/syslinux/archiso_sys-linux.cfg"
 python3 - "$SL" "$ARCHISO_OPTS" <<'PY'
 import sys
 p, opts = sys.argv[1], sys.argv[2]
 s = open(p).read()
 install = (
-    "LABEL aegisinstall\n"
-    "MENU LABEL Install Aegis OS\n"
+    "\nLABEL aegisinstall\n"
+    "MENU LABEL Aegis OS installer (text mode)\n"
     "LINUX /%INSTALL_DIR%/boot/%ARCH%/vmlinuz-linux\n"
     "INITRD /%INSTALL_DIR%/boot/%ARCH%/initramfs-linux.img\n"
-    "APPEND " + opts + " aegis.install\n\n"
+    "APPEND " + opts + " aegis.install\n"
 )
 s = s.replace("MENU LABEL Arch Linux install medium (%ARCH%, BIOS)",
-              "MENU LABEL Aegis OS (live / try the sphere)")
-open(p, "w").write(install + s)
+              "MENU LABEL Aegis OS (live · install from inside)")
+open(p, "w").write(s + install)
 PY
-sed -i -e 's/^DEFAULT .*/DEFAULT aegisinstall/' -e 's/^TIMEOUT .*/TIMEOUT 100/' \
-    "$PROFILE/syslinux/archiso_sys.cfg"
+sed -i 's/^TIMEOUT .*/TIMEOUT 100/' "$PROFILE/syslinux/archiso_sys.cfg"
 
-echo "==> File permissions for the installer launcher"
+echo "==> File permissions: installers + the sudoers grant for the GUI backend"
 python3 - "$PROFILE/profiledef.sh" <<'PY'
 import sys, re
 p = sys.argv[1]
 s = open(p).read()
-add = '  ["/usr/local/bin/aegis-installer"]="0:0:755"\n'
+add = (
+    '  ["/usr/local/bin/aegis-installer"]="0:0:755"\n'
+    '  ["/usr/local/bin/aegis-install-backend"]="0:0:755"\n'
+    '  ["/etc/sudoers.d/aegis-installer"]="0:0:440"\n'
+)
 s = re.sub(r'(file_permissions=\()', r'\1\n' + add, s, count=1)
 open(p, "w").write(s)
 PY

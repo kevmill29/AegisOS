@@ -1,0 +1,330 @@
+#!/usr/bin/env python3
+"""Root backend for the sphere's GUI installer (live ISO only).
+
+The kiosk runs as the unprivileged `aegis` user; installation needs root. A
+sudoers drop-in (shipped only in the live airootfs, never on installed
+systems) lets the aegis user run exactly this script. The Electron main
+process drives it over pipes:
+
+  aegis-install-backend list-disks   -> JSON array of candidate target disks
+  aegis-install-backend install      -> answers JSON on stdin, NDJSON progress
+                                        events on stdout, exit 0 on success
+  aegis-install-backend reboot       -> reboot the machine
+
+Design: the GUI asks the five human questions (disk, username, password,
+computer name); this script turns them into an archinstall --config/--creds
+pair and runs archinstall --silent as the trusted, non-interactive base
+installer, then applies the Aegis overlay (same repo + packages as the text
+installer) and VERIFIES it before reporting success. The overlay can't be
+skipped by a stray reboot: archinstall runs under a shutdown inhibitor and
+this script owns the whole sequence.
+"""
+
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+
+TARGET = "/mnt"
+REPO_SRC = "/opt/aegis/repo"
+MIRROR = "https://geo.mirror.pkgbuild.com/$repo/os/$arch"
+GAMING_PKGS = ["steam", "xorg-xwayland", "lib32-mesa", "lib32-vulkan-icd-loader"]
+LOCKFILE = "/run/aegis-install.lock"
+MIN_DISK_BYTES = 30 * 1024**3  # smaller than 30 GiB won't fit a gaming install
+
+
+def emit(event, **kw):
+    """NDJSON progress stream the Electron main process parses line-by-line."""
+    print(json.dumps({"event": event, **kw}), flush=True)
+
+
+def fail(msg, code=1):
+    emit("error", msg=msg)
+    sys.exit(code)
+
+
+def run_json(cmd):
+    return json.loads(subprocess.run(cmd, capture_output=True, text=True, check=True).stdout)
+
+
+def human_size(nbytes):
+    for unit in ("GB", "TB"):
+        nbytes /= 1000**3 if unit == "GB" else 1000
+        if nbytes < 1000 or unit == "TB":
+            return f"{nbytes:.0f} {unit}"
+
+
+def boot_disk():
+    """The device the live USB itself lives on — never offer it as a target."""
+    try:
+        src = subprocess.run(
+            ["findmnt", "-n", "-o", "SOURCE", "/run/archiso/bootmnt"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        parent = subprocess.run(
+            ["lsblk", "-no", "PKNAME", src], capture_output=True, text=True
+        ).stdout.strip()
+        return f"/dev/{parent}" if parent else src
+    except subprocess.CalledProcessError:
+        return None  # booted some other way (e.g. ISO attached as CD)
+
+
+def list_disks():
+    exclude = boot_disk()
+    disks = []
+    for d in run_json(["lsblk", "-J", "-b", "-d", "-o", "PATH,SIZE,MODEL,TYPE,RM,TRAN"])["blockdevices"]:
+        if d.get("type") != "disk" or d["path"] == exclude:
+            continue
+        if (d.get("size") or 0) < MIN_DISK_BYTES:
+            continue
+        disks.append({
+            "path": d["path"],
+            "size": human_size(d["size"]),
+            "bytes": d["size"],
+            "model": (d.get("model") or "Disk").strip(),
+            "transport": d.get("tran") or "",
+            "removable": bool(d.get("rm")),
+        })
+    print(json.dumps(disks))
+
+
+# archinstall 4.4's Size parser requires an explicit sector_size dict — its
+# own config-sample.json shows null there, but null crashes SectorSize.parse_args.
+SECTOR = {"value": 512, "unit": "B"}
+
+
+def mib(v):
+    return {"sector_size": SECTOR, "unit": "MiB", "value": v}
+
+
+def make_config(disk, hostname, disk_bytes):
+    """archinstall 4.4 --config JSON. The shipped config-sample.json is stale
+    against 4.4's parser (validated by --dry-run against the real binary):
+    sector_size must be an explicit dict, every partition needs a dev_path
+    key, and there is no Percent unit — so the root size is computed in MiB
+    from the disk size, leaving 1 MiB of tail for the backup GPT header.
+    Layout: systemd-boot on UEFI, 1 GiB fat32 /boot + ext4 root filling the
+    disk, NetworkManager on the target, multilib enabled, fast mirror pinned."""
+    root_mib = disk_bytes // (1024 * 1024) - 1025 - 1
+    return {
+        "archinstall-language": "English",
+        "audio_config": {"audio": "pipewire"},
+        "bootloader_config": {"bootloader": "Systemd-boot", "uki": False, "removable": False},
+        "disk_config": {
+            "config_type": "default_layout",
+            "device_modifications": [{
+                "device": disk,
+                "wipe": True,
+                "partitions": [
+                    {
+                        "obj_id": "aaaaaaaa-1111-4111-8111-aaaaaaaaaaa1",
+                        "status": "create", "type": "primary",
+                        "fs_type": "fat32", "flags": ["boot"],
+                        "start": mib(1), "size": mib(1024),
+                        "mountpoint": "/boot", "mount_options": [], "btrfs": [],
+                        "dev_path": None,
+                    },
+                    {
+                        "obj_id": "aaaaaaaa-2222-4222-8222-aaaaaaaaaaa2",
+                        "status": "create", "type": "primary",
+                        "fs_type": "ext4", "flags": [],
+                        "start": mib(1025),
+                        "size": mib(root_mib),
+                        "mountpoint": "/", "mount_options": [], "btrfs": [],
+                        "dev_path": None,
+                    },
+                ],
+            }],
+        },
+        "hostname": hostname,
+        "kernels": ["linux"],
+        "locale_config": {"kb_layout": "us", "sys_enc": "UTF-8", "sys_lang": "en_US"},
+        "mirror_config": {
+            "custom_servers": [{"url": MIRROR}],
+            "mirror_regions": {},
+            "optional_repositories": ["multilib"],
+            "custom_repositories": [],
+        },
+        "network_config": {"type": "nm"},
+        "ntp": True,
+        "packages": [],
+        "pacman_config": {"color": False, "parallel_downloads": 5},
+        "swap": {"enabled": True, "algorithm": "zstd"},
+        "timezone": "UTC",
+        "script": "guided",
+        "silent": True,
+        "version": "4.4",
+    }
+
+
+def hash_password(password):
+    return subprocess.run(
+        ["openssl", "passwd", "-6", "-stdin"],
+        input=password, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+
+def check_network():
+    try:
+        with socket.create_connection(("geo.mirror.pkgbuild.com", 443), timeout=15):
+            pass
+        return True
+    except OSError:
+        return False
+
+
+def stream(cmd, on_line=None):
+    """Run a command, forwarding each output line as a log event."""
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    for line in proc.stdout:
+        line = line.rstrip()
+        if line:
+            emit("log", line=line)
+            if on_line:
+                on_line(line)
+    return proc.wait()
+
+
+def find_partitions(disk):
+    """Locate the root + boot partitions we created, for the overlay mount
+    fallback (archinstall usually leaves the target mounted, but don't rely
+    on it)."""
+    root = boot = None
+    for d in run_json(["lsblk", "-J", "-o", "PATH,FSTYPE", disk])["blockdevices"]:
+        for p in d.get("children", []):
+            if p.get("fstype") == "ext4":
+                root = p["path"]
+            elif p.get("fstype") == "vfat":
+                boot = p["path"]
+    return root, boot
+
+
+def install():
+    answers = json.load(sys.stdin)
+    disk = answers["disk"]
+    username = answers["username"]
+    password = answers["password"]
+    hostname = answers.get("hostname") or "aegis"
+
+    if os.geteuid() != 0:
+        fail("Backend must run as root (via the shipped sudoers rule).")
+    if not os.path.isdir("/sys/firmware/efi"):
+        fail("This machine booted in legacy BIOS mode. Reboot in UEFI mode, "
+             "or use the text-mode installer from the boot menu.")
+    if not os.path.exists(disk):
+        fail(f"Disk {disk} not found.")
+    if disk == boot_disk():
+        fail("That is the install USB itself — pick the computer's own disk.")
+
+    # One install at a time: a second click while one runs must be a no-op.
+    lock = os.open(LOCKFILE, os.O_CREAT | os.O_RDWR)
+    import fcntl
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fail("An installation is already running.")
+
+    emit("phase", pct=5, msg="Checking the internet connection")
+    if not check_network():
+        fail("No internet connection. Plug in a network cable and try again "
+             "(Wi-Fi setup from the installer is coming; for now use ethernet).")
+    with open("/etc/pacman.d/mirrorlist", "w") as f:
+        f.write(f"Server = {MIRROR}\n")
+
+    emit("phase", pct=10, msg="Preparing the installation plan")
+    disk_bytes = run_json(["lsblk", "-J", "-b", "-d", "-o", "SIZE", disk])["blockdevices"][0]["size"]
+    if disk_bytes < MIN_DISK_BYTES:
+        fail("That disk is too small — Aegis needs at least 30 GB.")
+    workdir = tempfile.mkdtemp(prefix="aegis-install.", dir="/run")
+    os.chmod(workdir, 0o700)
+    config_path = os.path.join(workdir, "config.json")
+    creds_path = os.path.join(workdir, "creds.json")
+    with open(config_path, "w") as f:
+        json.dump(make_config(disk, hostname, disk_bytes), f, indent=2)
+    pw_hash = hash_password(password)
+    with open(creds_path, "w") as f:
+        os.fchmod(f.fileno(), 0o600)
+        json.dump({
+            "users": [{"username": username, "enc_password": pw_hash, "sudo": True}],
+            "root_enc_password": pw_hash,
+        }, f)
+
+    emit("phase", pct=15, msg="Installing the base system (this takes a while)")
+    # Shutdown inhibitor: while only half the install is on disk, a reboot
+    # would strand the machine as vanilla Arch with no Aegis. Refuse it.
+    pct = {"v": 15}
+
+    def track(line):
+        # Coarse progress from archinstall's own log markers.
+        for marker, p in (("Formatting", 20), ("Installing packages", 30),
+                          ("pacstrap", 30), ("Generating fstab", 55),
+                          ("bootloader", 65), ("Network configuration", 70)):
+            if marker.lower() in line.lower() and p > pct["v"]:
+                pct["v"] = p
+                emit("phase", pct=p, msg="Installing the base system")
+
+    code = stream([
+        "systemd-inhibit", "--who=Aegis installer",
+        "--why=Aegis overlay not applied yet", "--what=shutdown", "--mode=block",
+        "archinstall", "--config", config_path, "--creds", creds_path,
+        "--silent", "--skip-version-check",
+    ], on_line=track)
+    # Credentials served their purpose — don't leave hashes in /run.
+    shutil.rmtree(workdir, ignore_errors=True)
+    if code != 0:
+        fail("The base system installer reported an error. Nothing on your "
+             "other disks was changed. Check the log above, then try again.")
+
+    emit("phase", pct=75, msg="Adding Aegis (agent, sphere, gaming stack)")
+    if not os.path.ismount(TARGET):
+        root, boot = find_partitions(disk)
+        if not root:
+            fail("Could not find the freshly installed system to finish setup.")
+        subprocess.run(["mount", root, TARGET], check=True)
+        if boot:
+            os.makedirs(f"{TARGET}/boot", exist_ok=True)
+            subprocess.run(["mount", boot, f"{TARGET}/boot"], check=False)
+
+    pconf = f"{TARGET}/etc/pacman.conf"
+    conf = open(pconf).read()
+    if "[multilib]" not in conf:
+        conf += "\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n"
+    if "[aegis]" not in conf:
+        conf += "\n[aegis]\nSigLevel = Optional TrustAll\nServer = file:///opt/aegis-repo\n"
+    with open(pconf, "w") as f:
+        f.write(conf)
+    shutil.copytree(REPO_SRC, f"{TARGET}/opt/aegis-repo", dirs_exist_ok=True)
+
+    code = stream(["arch-chroot", TARGET, "pacman", "-Sy", "--noconfirm", "aegis", *GAMING_PKGS])
+    if code != 0:
+        fail("Aegis overlay install hit an error — the base system is on the "
+             "disk. Re-run the installer and it will finish the overlay.")
+
+    emit("phase", pct=95, msg="Verifying the installation")
+    if subprocess.run(["arch-chroot", TARGET, "pacman", "-Q", "aegis"],
+                      capture_output=True).returncode != 0:
+        fail("Verification failed: Aegis is not on the target disk. "
+             "Re-run the installer.")
+
+    emit("phase", pct=100, msg="Done")
+    emit("done", msg="Aegis OS is installed. Remove the USB stick and restart.")
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    if cmd == "list-disks":
+        list_disks()
+    elif cmd == "install":
+        install()
+    elif cmd == "reboot":
+        subprocess.run(["systemctl", "reboot"])
+    else:
+        print("usage: aegis-install-backend {list-disks|install|reboot}", file=sys.stderr)
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()

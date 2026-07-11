@@ -39,6 +39,26 @@ contextBridge.exposeInMainWorld('aegis', {
     ipcRenderer.on('terminal:data', handler);
     return () => ipcRenderer.removeListener('terminal:data', handler);
   },
+  // GUI installer (live ISO only — installerCapable() is false on installed
+  // systems and in dev, and the UI hides itself). start() carries the user's
+  // answers incl. password over IPC + stdin, never argv.
+  installerCapable() {
+    return ipcRenderer.invoke('installer:capable');
+  },
+  installerListDisks() {
+    return ipcRenderer.invoke('installer:list-disks');
+  },
+  installerStart(answers) {
+    ipcRenderer.send('installer:start', answers);
+  },
+  installerReboot() {
+    ipcRenderer.send('installer:reboot');
+  },
+  onInstallerProgress(callback) {
+    const handler = (_evt, payload) => callback(payload);
+    ipcRenderer.on('installer:progress', handler);
+    return () => ipcRenderer.removeListener('installer:progress', handler);
+  },
   // Called once the renderer has attached its listeners: main replays the
   // current link state + last Hello. Push-only delivery loses the startup
   // events on slow targets, where the socket connects before the first

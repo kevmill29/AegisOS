@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { AegisSphere } from './sphere/AegisSphere.js';
 import { createAudioSource } from './audio.js';
 import Terminal from './Terminal.jsx';
+import Installer from './Installer.jsx';
 
 const styles = {
   root: {
@@ -21,6 +22,20 @@ const styles = {
     letterSpacing: '0.35em',
     textTransform: 'uppercase',
     fontSize: '13px',
+  },
+  installButton: {
+    position: 'absolute',
+    right: '3vw',
+    bottom: '4vh',
+    background: 'rgba(51, 214, 255, 0.10)',
+    border: '1px solid rgba(51, 214, 255, 0.5)',
+    color: '#33d6ff',
+    borderRadius: '6px',
+    padding: '10px 20px',
+    fontSize: '13px',
+    letterSpacing: '0.12em',
+    cursor: 'pointer',
+    zIndex: 15,
   },
 };
 
@@ -42,6 +57,9 @@ export default function App() {
   const [sleeping, setSleeping] = useState(false);
   const [gameName, setGameName] = useState(null);
   const [terminalOpen, setTerminalOpen] = useState(false);
+  // Live-ISO only: the install backend exists → show the "Install" entrypoint.
+  const [installerCapable, setInstallerCapable] = useState(false);
+  const [installerOpen, setInstallerOpen] = useState(false);
 
   useEffect(() => {
     // WebGL is a nice-to-have, not load-bearing: if context creation fails
@@ -94,6 +112,8 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
 
+    window.aegis?.installerCapable?.().then((capable) => setInstallerCapable(!!capable));
+
     // Listeners are attached — ask main to replay the current agent state.
     window.aegis?.ready?.();
 
@@ -125,6 +145,12 @@ export default function App() {
       <div style={{ ...styles.hud, color: hudColor(state), textShadow: `0 0 12px ${hudColor(state)}` }}>
         {hudText(state)}
       </div>
+      {installerCapable && !installerOpen && (
+        <button style={styles.installButton} onClick={() => setInstallerOpen(true)}>
+          Install Aegis OS →
+        </button>
+      )}
+      <Installer visible={installerOpen} onRequestClose={() => setInstallerOpen(false)} />
       <Terminal visible={terminalOpen} onRequestClose={() => setTerminalOpen(false)} />
     </div>
   );

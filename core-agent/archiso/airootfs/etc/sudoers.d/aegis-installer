@@ -1,0 +1,5 @@
+# Live ISO only (this file ships in the airootfs, never in the aegis package,
+# so installed systems don't have it). The sphere kiosk runs as the
+# unprivileged `aegis` user; installing to disk needs root. Scope the grant to
+# exactly the install backend — not a general sudo.
+aegis ALL=(root) NOPASSWD: /usr/local/bin/aegis-install-backend

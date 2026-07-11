@@ -3,6 +3,7 @@
 // which keeps contextIsolation on and nodeIntegration off.
 const { app, BrowserWindow, globalShortcut, ipcMain, session, screen } = require('electron');
 const { spawn } = require('node:child_process');
+const fs = require('node:fs');
 const net = require('node:net');
 const path = require('node:path');
 
@@ -180,6 +181,68 @@ ipcMain.on('terminal:exec', (event, { execId, command }) => {
 
 ipcMain.on('terminal:kill', (_event, { execId }) => {
   running.get(execId)?.kill();
+});
+
+// ---- GUI installer bridge (live ISO only) ----
+// The backend script ships only in the live airootfs — its presence IS the
+// "we're running from the install USB" signal. Installed systems never have
+// it (nor the sudoers rule that lets the aegis user run it), so the install
+// UI simply doesn't exist there. The renderer sends five answers; root-side
+// heavy lifting (archinstall --silent + the Aegis overlay) happens in the
+// backend, streaming NDJSON progress back up.
+const INSTALL_BACKEND = '/usr/local/bin/aegis-install-backend';
+const installerCapable = process.platform === 'linux' && fs.existsSync(INSTALL_BACKEND);
+let installChild = null; // one install at a time (backend also holds a lock)
+
+ipcMain.handle('installer:capable', () => installerCapable);
+
+ipcMain.handle('installer:list-disks', () => {
+  if (!installerCapable) return [];
+  return new Promise((resolve) => {
+    const child = spawn('sudo', ['-n', INSTALL_BACKEND, 'list-disks']);
+    let out = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.on('close', () => {
+      try { resolve(JSON.parse(out)); } catch { resolve([]); }
+    });
+    child.on('error', () => resolve([]));
+  });
+});
+
+ipcMain.on('installer:start', (event, answers) => {
+  if (!installerCapable || installChild) return;
+  const send = (payload) => event.sender.send('installer:progress', payload);
+
+  installChild = spawn('sudo', ['-n', INSTALL_BACKEND, 'install']);
+  // Answers (incl. the password) go over stdin, never argv — argv is visible
+  // to every process on the system.
+  installChild.stdin.write(JSON.stringify(answers));
+  installChild.stdin.end();
+
+  let buffer = '';
+  installChild.stdout.on('data', (chunk) => {
+    buffer += chunk.toString('utf8');
+    let nl;
+    while ((nl = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line) continue;
+      try { send(JSON.parse(line)); } catch { send({ event: 'log', line }); }
+    }
+  });
+  installChild.stderr.on('data', (d) => send({ event: 'log', line: d.toString('utf8').trim() }));
+  installChild.on('close', (code) => {
+    installChild = null;
+    send({ event: 'exit', code: code ?? -1 });
+  });
+  installChild.on('error', (err) => {
+    installChild = null;
+    send({ event: 'error', msg: `could not start the installer: ${err.message}` });
+  });
+});
+
+ipcMain.on('installer:reboot', () => {
+  if (installerCapable) spawn('sudo', ['-n', INSTALL_BACKEND, 'reboot']);
 });
 
 // Renderer signals its listeners are attached — replay current state. The
