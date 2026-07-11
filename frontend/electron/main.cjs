@@ -55,9 +55,36 @@ function sendToRenderer(channel, payload) {
 // multi-monitor, extended) desktop, so the sphere can render on one screen and
 // spill its light across the rest instead of splitting on the seam.
 let lastLayout = { focusX: 0.5, multi: false };
+
+// A single real monitor tops out around 21:9 (~2.37). Anything meaningfully
+// wider that's reported as ONE display is actually several physical panels the
+// compositor merged into a single output — a common cage/Chromium-on-Wayland
+// behavior where getAllDisplays() collapses to length 1. Its geometric center
+// lands on the seam between panels, the worst spot for the sphere, so we detect
+// the merged case by aspect and aim at the left-most panel instead.
+const SINGLE_PANEL_MAX_ASPECT = 2.6;
+const PANEL_BASELINE_ASPECT = 16 / 9; // to estimate how many panels merged
+
 function computeLayout() {
   const displays = screen.getAllDisplays();
   const primary = screen.getPrimaryDisplay();
+
+  // One reported display: either a genuine single screen, or several monitors
+  // the compositor fused into one wide output.
+  if (displays.length === 1) {
+    const b = displays[0].bounds;
+    const aspect = b.height > 0 ? b.width / b.height : PANEL_BASELINE_ASPECT;
+    if (aspect > SINGLE_PANEL_MAX_ASPECT) {
+      const panels = Math.max(2, Math.round(aspect / PANEL_BASELINE_ASPECT));
+      // Center of the left-most panel — always clear of every seam.
+      return { focusX: 1 / (2 * panels), multi: true, count: panels, merged: true };
+    }
+    return { focusX: 0.5, multi: false, count: 1 };
+  }
+
+  // Multiple displays reported separately: the fullscreen surface spans the
+  // whole extended desktop, so place the sphere at the primary's center within
+  // that span.
   let minX = Infinity, maxX = -Infinity;
   for (const d of displays) {
     minX = Math.min(minX, d.bounds.x);
