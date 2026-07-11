@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Kiosk launcher: greetd's initial_session runs this (wrapped in systemd-cat,
+# so everything cage and Electron print lands in the journal — before this,
+# session stderr died on the VT and every kiosk failure was an undiagnosable
+# black screen).
+#
+# Preflight: cage needs a KMS display device (/dev/dri/card*). Without one —
+# classic case: a VM with the wrong virtual GPU — cage exits in silence and
+# greetd falls back to a text login that looks like a hang. Tell the human
+# what's wrong and how to fix it instead.
+set -u
+
+if ! ls /dev/dri/card* >/dev/null 2>&1; then
+  msg="
+  =====================================================================
+   AEGIS: no display driver found (/dev/dri is empty)
+
+   The sphere needs a kernel display (KMS) device and none exists, so
+   the graphical session cannot start on this machine/VM.
+
+   VirtualBox:  Settings > Display >
+                  Graphics Controller: VMSVGA
+                  Video Memory: 128 MB
+                  (Enable 3D Acceleration: recommended)
+   QEMU/KVM:    use -device virtio-vga
+   VMware:      the default SVGA adapter works
+
+   This screen will return to a text login in 10 minutes.
+   (Console login works now: press Ctrl-Alt-F2.)
+  =====================================================================
+"
+  echo "$msg" >&2                      # journal
+  echo "$msg" > /dev/tty 2>/dev/null   # the screen the user is staring at
+  sleep 600
+  exit 1
+fi
+
+exec cage -m extend -s -- /usr/bin/aegis-session

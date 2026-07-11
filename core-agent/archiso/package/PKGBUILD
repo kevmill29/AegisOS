@@ -27,5 +27,6 @@ package() {
   cp -a "$startdir/root/." "$pkgdir/"
   chmod 0755 "$pkgdir/usr/bin/aegis-agent" \
              "$pkgdir/usr/bin/aegis-session" \
+             "$pkgdir/usr/bin/aegis-kiosk-launch" \
              "$pkgdir/usr/bin/fake-game"
 }

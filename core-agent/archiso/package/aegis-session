@@ -15,29 +15,27 @@ export AEGIS_KIOSK=1
 # greetd launched, already honors this; on real GPU hardware it uses the fast path).
 export WLR_RENDERER_ALLOW_SOFTWARE=1
 
-# Audio, as this user (the correct way — root broke headset enumeration):
-# PipeWire graph + WirePlumber (device/policy manager) + pipewire-pulse (the
-# PulseAudio server Chromium/Electron talks to). Then point the default capture
-# at the default sink's monitor so the sphere reacts to whatever is playing
-# (game/music) instead of a real mic. All non-fatal.
+# Audio, as this user (the correct way — root broke headset enumeration).
+# Let systemd's *user* units own the PipeWire stack: greetd gave us a real
+# logind session, so pipewire/wireplumber/pipewire-pulse are socket-activated
+# per-user services. (Spawning the daemons by hand here fought those units —
+# wireplumber flapped start/stop until its dependency failed.) Then point the
+# default capture at the default sink's monitor so the sphere reacts to
+# whatever is playing (game/music) instead of a real mic. All non-fatal.
 mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null || true
-if command -v pipewire >/dev/null 2>&1 && ! pgrep -x -U "$(id -u)" pipewire >/dev/null 2>&1; then
-  mkdir -p "$HOME/.local/state" 2>/dev/null || true
-  pipewire        >"$HOME/aegis-audio.log" 2>&1 &
-  sleep 0.5
-  wireplumber     >>"$HOME/aegis-audio.log" 2>&1 &
-  pipewire-pulse  >>"$HOME/aegis-audio.log" 2>&1 &
-  (
-    for _ in $(seq 1 30); do
-      sink="$(pactl get-default-sink 2>/dev/null)"
-      if [ -n "$sink" ] && [ "$sink" != "auto_null" ] \
-         && pactl list short sources 2>/dev/null | grep -q "${sink}.monitor"; then
-        pactl set-default-source "${sink}.monitor" 2>/dev/null && break
-      fi
-      sleep 1
-    done
-  ) >>"$HOME/aegis-audio.log" 2>&1 &
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl --user start pipewire.service wireplumber.service pipewire-pulse.service 2>/dev/null || true
 fi
+(
+  for _ in $(seq 1 30); do
+    sink="$(pactl get-default-sink 2>/dev/null)"
+    if [ -n "$sink" ] && [ "$sink" != "auto_null" ] \
+       && pactl list short sources 2>/dev/null | grep -q "${sink}.monitor"; then
+      pactl set-default-source "${sink}.monitor" 2>/dev/null && break
+    fi
+    sleep 1
+  done
+) >"$HOME/aegis-audio.log" 2>&1 &
 
 # Electron: native Wayland via ozone; WebGL on GPU-less targets via
 # ANGLE-on-SwiftShader (NOT --disable-gpu, which kills WebGL). --no-sandbox keeps

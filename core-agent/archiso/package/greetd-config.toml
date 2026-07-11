@@ -1,9 +1,12 @@
 # greetd drives the Aegis kiosk. `initial_session` autologins the unprivileged
-# `aegis` user at boot (no greeter shown) straight into cage running the sphere.
-#   cage -m extend : extend across all outputs (Windows-style). The frontend
-#                    then places the sphere on the primary screen and clouds its
-#                    light across the others, so it never splits on the seam.
-#   cage -s        : allow VT switching, so Ctrl-Alt-F2 still reaches a console.
+# `aegis` user at boot (no greeter shown) into aegis-kiosk-launch, which
+# preflights the display device and execs cage running the sphere.
+#   systemd-cat    : cage/Electron output goes to the journal — without it,
+#                    session stderr dies on the VT and kiosk failures are
+#                    undiagnosable black screens.
+#   cage -m extend : (inside the launcher) extend across all outputs; the
+#                    frontend places the sphere on the primary screen and
+#                    clouds its light across the rest.
 # If the session ever exits, `default_session` falls back to a text login.
 
 [terminal]
@@ -14,5 +17,5 @@ command = "agreety --cmd /bin/bash"
 user = "greeter"
 
 [initial_session]
-command = "cage -m extend -s -- /usr/bin/aegis-session"
+command = "systemd-cat -t aegis-kiosk -- /usr/bin/aegis-kiosk-launch"
 user = "aegis"
