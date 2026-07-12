@@ -35,4 +35,21 @@ if ! ls /dev/dri/card* >/dev/null 2>&1; then
   exit 1
 fi
 
-exec cage -m extend -s -- /usr/bin/aegis-session
+# First try the normal renderer chain — gles2/vulkan, fast on real GPUs.
+START=$SECONDS
+cage -m extend -s -- /usr/bin/aegis-session
+RC=$?
+RUNTIME=$((SECONDS - START))
+
+# cage dying within seconds means renderer creation failed, not a user logout.
+# Classic case: VirtualBox VMSVGA with 3D acceleration off — vmwgfx has KMS
+# (so the preflight passed) but Mesa hard-refuses EGL ("VMware: No 3D
+# enabled"), and wlroots gives up after gles2+vulkan without trying its
+# software renderer. Retry once with pixman: pure-CPU compositing, and the
+# sphere already renders via SwiftShader, so the full stack works unaccelerated.
+if [ "$RC" -ne 0 ] && [ "$RUNTIME" -lt 30 ]; then
+  echo "cage exited rc=$RC after ${RUNTIME}s — retrying with the software renderer (WLR_RENDERER=pixman)" >&2
+  export WLR_RENDERER=pixman
+  exec cage -m extend -s -- /usr/bin/aegis-session
+fi
+exit "$RC"

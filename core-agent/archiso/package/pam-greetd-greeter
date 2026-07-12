@@ -1,0 +1,11 @@
+#%PAM-1.0
+# PAM service for greetd's *fallback* text greeter (agreety). greetd 0.10+
+# runs default_session under the PAM service name "greetd-greeter", but the
+# Arch greetd package only ships /etc/pam.d/greetd — with this file missing,
+# PAM fell through to the deny-all "other" policy and EVERY login at the
+# fallback prompt failed with "Login incorrect" (including passwordless root
+# on the live ISO). Mirror the standard local-login stack.
+auth       include      system-local-login
+account    include      system-local-login
+session    include      system-local-login
+password   include      system-local-login

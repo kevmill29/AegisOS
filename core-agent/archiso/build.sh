@@ -82,6 +82,7 @@ install -Dm755 "$OVERLAY/package/aegis-kiosk-launch" "$PKGSTAGE/root/usr/bin/aeg
 install -Dm755 "$REPO_ROOT/iso/fake-game"            "$PKGSTAGE/root/usr/bin/fake-game"
 install -Dm644 "$OVERLAY/package/aegis-agent.service" "$PKGSTAGE/root/usr/lib/systemd/system/aegis-agent.service"
 install -Dm644 "$OVERLAY/package/greetd-config.toml"  "$PKGSTAGE/root/usr/share/aegis/greetd-config.toml"
+install -Dm644 "$OVERLAY/package/pam-greetd-greeter"   "$PKGSTAGE/root/etc/pam.d/greetd-greeter"
 install -Dm644 "$OVERLAY/package/sysusers-aegis.conf" "$PKGSTAGE/root/usr/lib/sysusers.d/aegis.conf"
 install -Dm644 "$OVERLAY/package/tmpfiles-aegis.conf" "$PKGSTAGE/root/usr/lib/tmpfiles.d/aegis.conf"
 mkdir -p "$PKGSTAGE/root/opt/aegis/frontend"
