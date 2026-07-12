@@ -13,6 +13,19 @@ launches and self-throttles so it never steals frames from your game.
 3. Boot the stick. Both **UEFI** and **BIOS** are supported — it uses the stock
    Arch kernel, so the console renders everywhere (no more blind UEFI screen).
 
+**Testing in a VM?** COPY the ISO out of `dist/` first (e.g. to
+`aegis-test.iso`) and attach the copy — rebuilds overwrite `dist/aegis-arch.iso`
+in place, and changing the medium under a running VM produces phantom
+"SQUASHFS data corrupt" errors. VirtualBox settings that matter: **EFI
+enabled** (System), Graphics Controller **VMSVGA** + **128 MB** video memory
+(Display), ≥4 GB RAM, ≥30 GB disk. Without a KMS-capable virtual GPU the
+kiosk can't start — it will tell you so on screen and drop to a text login.
+
+Every ISO must pass the automated boot gate before shipping:
+`bash core-agent/archiso/test-boot.sh` boots it in QEMU, asserts the kiosk
+session survives, and screendumps the display to confirm the sphere actually
+rendered (`AEGIS_TEST_VGA=VGA` re-runs it with an unaccelerated GPU).
+
 ## Boot menu
 
 Two entries (UEFI and BIOS), **the live sphere is the default**:
